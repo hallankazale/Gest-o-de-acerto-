@@ -18,24 +18,20 @@ final class BudgetDatabase extends SQLiteOpenHelper {
     private static final Pattern MONTH = Pattern.compile("\\d{4}-(0[1-9]|1[0-2])");
     private static final Pattern DAY = Pattern.compile("\\d{4}-(0[1-9]|1[0-2])-([0-2]\\d|3[01])");
 
-    BudgetDatabase(Context context) { super(context, DB_NAME, null, 1); }
+    BudgetDatabase(Context context) { super(context, DB_NAME, null, 2); }
 
     @Override public void onCreate(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE settings (name TEXT PRIMARY KEY, value TEXT NOT NULL)");
         db.execSQL("CREATE TABLE recurring (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, category TEXT NOT NULL, cents INTEGER NOT NULL CHECK(cents > 0), from_month TEXT, until_month TEXT)");
         db.execSQL("CREATE TABLE entries (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL CHECK(kind IN ('expense','income')), cents INTEGER NOT NULL CHECK(cents > 0), title TEXT NOT NULL, category TEXT NOT NULL, occurred_on TEXT NOT NULL, source TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)");
-        ContentValues setting = new ContentValues(); setting.put("name", "income_cents"); setting.put("value", "390000"); db.insertOrThrow("settings", null, setting);
-        seed(db, "Aluguel", "Moradia", 90000, null);
-        seed(db, "Água e luz", "Moradia", 25000, null);
-        seed(db, "Pensão 1", "Pensões", 54200, null);
-        seed(db, "Pensão 2", "Pensões", 40000, null);
-        seed(db, "Móveis", "Compras", 41200, "2027-02");
-        seed(db, "Ana Loja", "Compras", 30000, "2027-02");
+        // Start with no personal data. Never inject example debts or income in production.
+        ContentValues setting = new ContentValues(); setting.put("name", "income_cents"); setting.put("value", "0");
+        db.insertOrThrow("settings", null, setting);
     }
-    private void seed(SQLiteDatabase db, String title, String category, int cents, String until) {
-        ContentValues v = new ContentValues(); v.put("title", title); v.put("category", category); v.put("cents", cents); v.put("from_month", "2026-01"); v.put("until_month", until); db.insertOrThrow("recurring", null, v);
+    @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
+        // Preserve existing user entries on upgrades. Wiping is a separate, explicit user action.
+        if (oldVersion > newVersion) throw new IllegalStateException("Versão de banco inválida");
     }
-    @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) { /* Future schema versions use explicit migrations. */ }
 
     private static void requireMoney(long cents) {
         // Limit a single posting to R$ 10M and forbid zero/negative amounts.
@@ -58,7 +54,7 @@ final class BudgetDatabase extends SQLiteOpenHelper {
         JSONObject out = new JSONObject(); out.put("month", month);
         SQLiteDatabase db = getReadableDatabase();
         try (Cursor c = db.rawQuery("SELECT value FROM settings WHERE name=?", new String[]{"income_cents"})) {
-            out.put("incomeCents", c.moveToFirst() ? Long.parseLong(c.getString(0)) : 390000L);
+            out.put("incomeCents", c.moveToFirst() ? Long.parseLong(c.getString(0)) : 0L);
         }
         JSONArray bills = new JSONArray();
         try (Cursor c = db.rawQuery("SELECT id,title,category,cents,from_month,until_month FROM recurring ORDER BY id", null)) {
@@ -89,14 +85,25 @@ final class BudgetDatabase extends SQLiteOpenHelper {
         values.put("occurred_on", day); values.put("source", "voice".equals(source) ? "voice" : "text");
         getWritableDatabase().insertOrThrow("entries", null, values);
     }
+    void updateEntry(long id, String kind, long cents, String title, String category, String day) {
+        if (id < 1) throw new IllegalArgumentException("ID inválido");
+        if (!"income".equals(kind) && !"expense".equals(kind)) throw new IllegalArgumentException("Tipo inválido");
+        requireMoney(cents); requireDay(day);
+        ContentValues values = new ContentValues(); values.put("kind", kind); values.put("cents", cents);
+        values.put("title", checked(title,"Descrição")); values.put("category", checked(category,"Categoria"));
+        values.put("occurred_on", day);
+        if (getWritableDatabase().update("entries", values, "id=?", new String[]{Long.toString(id)}) != 1)
+            throw new IllegalArgumentException("Lançamento não encontrado");
+    }
     void deleteEntry(long id) {
         if (id < 1) throw new IllegalArgumentException("ID inválido");
         getWritableDatabase().delete("entries", "id=?", new String[]{Long.toString(id)});
     }
     void saveIncome(long cents) {
-        requireMoney(cents);
-        ContentValues v = new ContentValues(); v.put("value", Long.toString(cents));
-        getWritableDatabase().update("settings", v, "name=?", new String[]{"income_cents"});
+        // Unlike an expense, a zero income is valid and means "not configured".
+        if (cents < 0 || cents > 1_000_000_000L) throw new IllegalArgumentException("Renda inválida");
+        ContentValues v = new ContentValues(); v.put("name", "income_cents"); v.put("value", Long.toString(cents));
+        getWritableDatabase().insertWithOnConflict("settings", null, v, SQLiteDatabase.CONFLICT_REPLACE);
     }
     void saveBill(long id, String title, String category, long cents, String fromMonth, String untilMonth) {
         requireMoney(cents);
@@ -115,15 +122,38 @@ final class BudgetDatabase extends SQLiteOpenHelper {
         if (id < 1) throw new IllegalArgumentException("ID inválido");
         getWritableDatabase().delete("recurring", "id=?", new String[]{Long.toString(id)});
     }
+    void resetAll() {
+        // Destructive operation is only exposed after a confirmation form in the UI.
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            db.delete("entries", null, null);
+            db.delete("recurring", null, null);
+            ContentValues setting = new ContentValues(); setting.put("name", "income_cents"); setting.put("value", "0");
+            db.insertWithOnConflict("settings", null, setting, SQLiteDatabase.CONFLICT_REPLACE);
+            db.setTransactionSuccessful();
+        } finally { db.endTransaction(); }
+    }
     String exportCsv() {
-        StringBuilder sb = new StringBuilder("tipo;valor;data;categoria;descricao;origem\n");
+        // A single portable CSV includes every part of the budget, not just variable expenses.
+        StringBuilder sb = new StringBuilder("tipo;valor;data;categoria;descricao;origem;inicio;fim\n");
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT value FROM settings WHERE name='income_cents'", null)) {
+            if (c.moveToFirst()) appendCsv(sb, "renda_fixa", Long.parseLong(c.getString(0)), "", "Entradas", "Renda mensal", "configuracao", "", "");
+        }
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT title,category,cents,from_month,until_month FROM recurring ORDER BY id", null)) {
+            while (c.moveToNext()) appendCsv(sb, "conta_fixa", c.getLong(2), "", c.getString(1), c.getString(0), "recorrente", c.getString(3), c.isNull(4) ? "" : c.getString(4));
+        }
         try (Cursor c = getReadableDatabase().rawQuery("SELECT kind,cents,occurred_on,category,title,source FROM entries ORDER BY occurred_on DESC,id DESC",null)) {
-            while (c.moveToNext()) {
-                sb.append(csv(c.getString(0))).append(';').append(c.getLong(1) / 100).append(',').append(String.format(java.util.Locale.ROOT,"%02d", c.getLong(1) % 100)).append(';')
-                    .append(csv(c.getString(2))).append(';').append(csv(c.getString(3))).append(';').append(csv(c.getString(4))).append(';').append(csv(c.getString(5))).append('\n');
-            }
+            while (c.moveToNext()) appendCsv(sb, c.getString(0), c.getLong(1), c.getString(2), c.getString(3), c.getString(4), c.getString(5), "", "");
         }
         return sb.toString();
+    }
+    private static void appendCsv(StringBuilder sb, String kind, long cents, String day, String category, String title, String origin, String first, String last) {
+        sb.append(csv(kind)).append(';').append(cents / 100).append(',')
+                .append(String.format(java.util.Locale.ROOT, "%02d", cents % 100)).append(';')
+                .append(csv(day)).append(';').append(csv(category)).append(';')
+                .append(csv(title)).append(';').append(csv(origin)).append(';')
+                .append(csv(first)).append(';').append(csv(last)).append('\n');
     }
     private static String csv(String v) {
         String cleaned = v.replace("\n", " ").replace("\r", " ");

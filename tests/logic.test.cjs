@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { parseMessage, parseAmount, categorize, monthlySummary, moveMonth } = require('../app/src/main/assets/logic.js');
+const { parseMessage, parseAmount, categorize, monthlySummary, moveMonth, validDay } = require('../app/src/main/assets/logic.js');
 let tested = 0;
 const test = (name, fn) => { fn(); tested++; console.log('PASS', name); };
 test('mensagem por voz categorizada', () => {
@@ -18,15 +18,44 @@ test('entrada e data de ontem', () => {
   assert.equal(entry.kind,'income'); assert.equal(entry.cents,10050); assert.equal(entry.date,'2026-10-07');
 });
 test('despesa sem valor não é registrada', () => assert.ok(parseMessage('comprei pão').error));
-test('recorrentes até fevereiro de 2027 e saldo após', () => {
-  const s = {month:'2027-02',incomeCents:390000,entries:[],recurring:[
-   {cents:90000},{cents:25000},{cents:54200},{cents:40000},{cents:41200,untilMonth:'2027-02'},{cents:30000,untilMonth:'2027-02'}]};
-  const before = monthlySummary(s); assert.equal(before.fixedCents,280400); assert.equal(before.remainingCents,109600);
-  s.month = '2027-03'; const after = monthlySummary(s); assert.equal(after.fixedCents,209200); assert.equal(after.remainingCents,180800);
-  s.entries = [{kind:'expense',cents:5000}]; assert.equal(monthlySummary(s).remainingCents,175800);
+test('recorrência mensal com término definido', () => {
+  const s = {month:'2027-02',incomeCents:300000,entries:[],recurring:[
+    {cents:100000},{cents:10000},{cents:50000,untilMonth:'2027-02'}]};
+  const before = monthlySummary(s);
+  assert.equal(before.fixedCents,160000); assert.equal(before.remainingCents,140000);
+  s.month = '2027-03'; const after = monthlySummary(s);
+  assert.equal(after.fixedCents,110000); assert.equal(after.remainingCents,190000);
+  s.entries = [{kind:'expense',cents:5000}]; assert.equal(monthlySummary(s).remainingCents,185000);
 });
 test('navegação entre anos', () => assert.equal(moveMonth('2026-12',1),'2027-01'));
 test('classificação local de transporte e saúde', () => {
   assert.equal(categorize('paguei uber'),'Transporte'); assert.equal(categorize('farmácia'),'Saúde');
+});
+test('orçamento novo totalmente zerado', () => {
+  const empty = monthlySummary({month:'2026-10',incomeCents:0,recurring:[],entries:[]});
+  assert.equal(empty.incomeCents,0);assert.equal(empty.spentCents,0);
+  assert.equal(empty.remainingCents,0);assert.equal(empty.percent,null);assert.equal(empty.availablePercent,null);
+});
+test('gastos sem renda não indicam porcentagem enganosa', () => {
+  const result = monthlySummary({month:'2026-10',incomeCents:0,recurring:[],entries:[{kind:'expense',cents:5000}]});
+  assert.equal(result.remainingCents,-5000);assert.equal(result.percent,null);
+});
+test('percentual calculado com renda real', () => {
+  const result=monthlySummary({month:'2026-10',incomeCents:100000,recurring:[{cents:25000}],entries:[]});
+  assert.equal(result.percent,25); assert.equal(result.availablePercent,75);
+});
+test('data válida sem aceitar dia inexistente', () => {
+  assert.equal(validDay('2026-02-30'),false);assert.equal(validDay('2028-02-29'),true);
+  assert.equal(validDay('2026-11-31'),false);assert.equal(validDay('2026-10-08'),true);
+});
+test('sem contas ou rendas de exemplo nos arquivos distribuídos', () => {
+  const fs = require('node:fs');
+  const base = require('node:path').join(__dirname,'..');
+  const db = fs.readFileSync(require('node:path').join(base,'app/src/main/java/br/com/hallankazale/bolsoplus/BudgetDatabase.java'),'utf8');
+  const ui = fs.readFileSync(require('node:path').join(base,'app/src/main/assets/ui.js'),'utf8');
+  const html = fs.readFileSync(require('node:path').join(base,'app/src/main/assets/index.html'),'utf8');
+  assert.match(db,/setting\.put\("value", "0"\)/); assert.doesNotMatch(db, /seed\(db|390000/);
+  assert.match(ui,/incomeCents: 0, recurring: \[\], entries: \[\]/);assert.doesNotMatch(ui,/incomeCents: 390000/);
+  assert.match(html,/id="onboarding"/); assert.match(html,/id="resetButton"/);
 });
 console.log(`\n${tested} testes passaram`);

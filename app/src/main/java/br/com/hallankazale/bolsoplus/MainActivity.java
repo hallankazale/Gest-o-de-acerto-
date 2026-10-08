@@ -80,7 +80,15 @@ public final class MainActivity extends Activity {
     private void js(String invocation) { runOnUiThread(() -> { if (webView != null) webView.evaluateJavascript(invocation, null); }); }
     private void error(Exception e) { js("window.Bolso.showError(" + JSONObject.quote(e.getMessage() == null ? "Erro inesperado" : e.getMessage()) + ")"); }
     private void refresh() { String selected = month; disk.execute(() -> { try { js("window.Bolso.renderData(" + database.snapshot(selected).toString() + ")"); } catch (Exception e) { error(e); } }); }
-    private void task(Runnable work) { disk.execute(() -> { try { work.run(); refresh(); } catch (Exception e) { error(e); } }); }
+    private void task(Runnable work, String success) {
+        disk.execute(() -> {
+            try {
+                work.run();
+                refresh();
+                js("window.Bolso.toast(" + JSONObject.quote(success) + ")");
+            } catch (Exception e) { error(e); }
+        });
+    }
 
     private final class NativeBridge {
         @JavascriptInterface public void load(String selectedMonth) {
@@ -89,14 +97,18 @@ public final class MainActivity extends Activity {
             refresh();
         }
         @JavascriptInterface public void saveEntry(String kind, long cents, String title, String category, String date, String source) {
-            task(() -> database.saveEntry(kind, cents, title, category, date, source));
+            task(() -> database.saveEntry(kind, cents, title, category, date, source), "Lançamento salvo");
         }
-        @JavascriptInterface public void deleteEntry(long id) { task(() -> database.deleteEntry(id)); }
-        @JavascriptInterface public void saveIncome(long cents) { task(() -> database.saveIncome(cents)); }
+        @JavascriptInterface public void updateEntry(long id, String kind, long cents, String title, String category, String date) {
+            task(() -> database.updateEntry(id, kind, cents, title, category, date), "Lançamento atualizado");
+        }
+        @JavascriptInterface public void deleteEntry(long id) { task(() -> database.deleteEntry(id), "Lançamento excluído"); }
+        @JavascriptInterface public void saveIncome(long cents) { task(() -> database.saveIncome(cents), "Renda atualizada"); }
         @JavascriptInterface public void saveBill(long id, String title, String category, long cents, String fromMonth, String untilMonth) {
-            task(() -> database.saveBill(id, title, category, cents, fromMonth, untilMonth));
+            task(() -> database.saveBill(id, title, category, cents, fromMonth, untilMonth), "Conta salva");
         }
-        @JavascriptInterface public void deleteBill(long id) { task(() -> database.deleteBill(id)); }
+        @JavascriptInterface public void deleteBill(long id) { task(() -> database.deleteBill(id), "Conta excluída"); }
+        @JavascriptInterface public void resetAll() { task(database::resetAll, "Dados apagados com sucesso"); }
         @JavascriptInterface public void speak() { runOnUiThread(MainActivity.this::requestSpeech); }
         @JavascriptInterface public void exportCsv() { runOnUiThread(MainActivity.this::requestExport); }
     }
@@ -114,7 +126,7 @@ public final class MainActivity extends Activity {
         Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType("text/csv");
-        intent.putExtra(Intent.EXTRA_TITLE, "bolsoplus-lancamentos.csv");
+        intent.putExtra(Intent.EXTRA_TITLE, "bolsoplus-backup-completo.csv");
         try { startActivityForResult(intent, EXPORT_REQUEST); }
         catch (ActivityNotFoundException e) { js("window.Bolso.showError('Não foi possível abrir o gerenciador de arquivos.')"); }
     }

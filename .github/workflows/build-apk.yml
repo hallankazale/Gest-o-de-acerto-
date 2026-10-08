@@ -22,7 +22,8 @@ jobs:
         run: node tests/logic.test.cjs && node --check app/src/main/assets/ui.js
       - name: Preparar SDK
         run: |
-          # GitHub hosted Ubuntu runner already includes Android SDK.
+          # GitHub hosted ubuntu runner already contains the Android SDK.
+          # Avoid third-party setup that requests the removed Android "tools" package.
           SDK_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
           SDK_MANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager | head -n 1)"
           test -x "$SDK_MANAGER"
@@ -35,6 +36,6 @@ jobs:
       - name: Salvar APK
         uses: actions/upload-artifact@v4
         with:
-          name: BolsoPlus-v1-debug-apk
+          name: BolsoPlus-v1.1-limpo-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error

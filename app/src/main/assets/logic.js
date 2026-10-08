@@ -89,8 +89,9 @@
     const incomeCents = snapshot.incomeCents + extraIncome;
     const spentCents = fixedCents + expensesCents;
     const remainingCents = incomeCents - spentCents;
-    const percent = incomeCents > 0 ? Math.round(spentCents / incomeCents * 100) : 0;
-    return { fixed, fixedCents, expensesCents, extraIncome, incomeCents, spentCents, remainingCents, percent, availablePercent: Math.max(0, 100 - percent) };
+    // A percentage without a positive income is undefined; never advertise 100% free.
+    const percent = incomeCents > 0 ? Math.round(spentCents / incomeCents * 100) : null;
+    return { fixed, fixedCents, expensesCents, extraIncome, incomeCents, spentCents, remainingCents, percent, availablePercent: percent === null ? null : Math.max(0, 100 - percent) };
   }
   function moveMonth(month, offset) {
     if (!monthValid(month)) throw new Error('Mês inválido');
@@ -98,5 +99,10 @@
     const date = new Date(Date.UTC(y, m - 1 + offset, 1));
     return date.toISOString().slice(0, 7);
   }
-  return { categories, money, parseAmount, categorize, parseMessage, monthlySummary, moveMonth };
+  function validDay(day) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return false;
+    const date = new Date(day + 'T12:00:00Z');
+    return !Number.isNaN(date.getTime()) && date.toISOString().slice(0,10) === day;
+  }
+  return { categories, money, parseAmount, categorize, parseMessage, monthlySummary, moveMonth, validDay };
 });
