@@ -2,15 +2,16 @@ import test, {after} from 'node:test';
 import assert from 'node:assert/strict';
 import {createHmac,webcrypto} from 'node:crypto';
 import {handleRequest,verifySignature} from '../src/index.mjs';
-import {interpretFinance,brl,todayBrazil} from '../src/finance.mjs';
+import {interpretFinance,interpretFinanceBatch,brl,todayBrazil} from '../src/finance.mjs';
 if(!globalThis.crypto)globalThis.crypto=webcrypto;
 
 class FakeDatabase {
-  constructor(){this.devices=new Map();this.codes=new Map();this.pending=new Map();this.received=new Map();this.inbox=new Map();this.entries=[];this.nextCursor=1;}
+  constructor(){this.devices=new Map();this.codes=new Map();this.pending=new Map();this.pendingBatches=new Map();this.received=new Map();this.inbox=new Map();this.entries=[];this.nextCursor=1;}
   prepare(sql){const db=this;return {bind(...args){return {
    async first(){
     if(sql.includes('FROM devices WHERE token_hash=')){const wa=db.devices.get(args[0]);return wa===undefined?null:{token_hash:args[0],wa_id:wa};}
     if(sql.includes('FROM link_codes WHERE code_hash=')){const code=db.codes.get(args[0]);return code&&code.expires_at>args[1]?{token_hash:code.token_hash}:null;}
+    if(sql.includes('FROM pending_batches WHERE wa_id=')){return db.pendingBatches.get(args[0])||null;}
     if(sql.includes('FROM pending WHERE wa_id=')){return db.pending.get(args[0])||null;}
     if(sql.includes('COUNT(*) AS count'))return {count:[...db.received.values()].filter(x=>x.sender===args[0]).length};
     if(sql.includes('FROM inbox WHERE id=')){return db.inbox.get(args[0])||null;}
@@ -34,6 +35,9 @@ class FakeDatabase {
     else if(sql.startsWith('UPDATE devices SET wa_id=?,linked_at='))db.devices.set(args[1],args[0]);
     else if(sql.startsWith('UPDATE devices SET wa_id=NULL'))db.devices.set(args[0],null);
     else if(sql.startsWith('DELETE FROM link_codes WHERE token_hash=')){for(const [key,value] of db.codes)if(value.token_hash===args[0])db.codes.delete(key);}
+    else if(sql.startsWith('INSERT OR REPLACE INTO pending_batches'))db.pendingBatches.set(args[0],{wa_id:args[0],source_message_id:args[1],items_json:args[2],expires_at:args[3]});
+    else if(sql.startsWith('DELETE FROM pending_batches WHERE wa_id=? AND')){const row=db.pendingBatches.get(args[0]);if(row?.source_message_id===args[1])db.pendingBatches.delete(args[0]);else changes=0;}
+    else if(sql.startsWith('DELETE FROM pending_batches WHERE wa_id='))db.pendingBatches.delete(args[0]);
     else if(sql.startsWith('INSERT OR REPLACE INTO pending'))db.pending.set(args[0],{wa_id:args[0],kind:args[1],cents:args[2],title:args[3],category:args[4],occurred_on:args[5],source_message_id:args[6],expires_at:args[7]});
     else if(sql.startsWith('DELETE FROM pending WHERE wa_id=? AND'))db.pending.delete(args[0]);
     else if(sql.startsWith('DELETE FROM pending WHERE wa_id='))db.pending.delete(args[0]);
@@ -46,11 +50,12 @@ class FakeDatabase {
     else if(sql.startsWith('DELETE FROM transactions WHERE wa_id='))db.entries=db.entries.filter(x=>x.wa_id!==args[0]);
     else if(sql.startsWith('DELETE FROM received_events WHERE')){}
     else if(sql.startsWith('DELETE FROM link_codes WHERE expires_at<')){}
+    else if(sql.startsWith('DELETE FROM pending_batches WHERE expires_at<')){}
     else throw Error('Unmocked run: '+sql);
     return {meta:{changes}};
    }
   }}}}
-  async batch(statements){return Promise.all(statements.map(x=>x.run()));}
+  async batch(statements){const out=[];for(const statement of statements)out.push(await statement.run());return out;}
 }
 
 const phone='5511999999999',foreign='5511888888888';
@@ -97,7 +102,7 @@ test('end to end: pairing, confirm, sync, dedup and user isolation',async()=>{
  await sendWebhook(e,'link00001',phone,`VINCULAR ${pair.code}`,jobs);
  assert.equal((await (await handleRequest(new Request('https://bolso.test/v1/device/status',{headers}),e)).json()).linked,true);
  await sendWebhook(e,'expense01',phone,'gastei 50 reais de bolachas',jobs);
- assert.equal(db.entries.length,0,'no auto-save without confirmation');assert.equal(db.pending.get(phone).cents,5000);
+ assert.equal(db.entries.length,0,'no auto-save without confirmation');assert.equal(JSON.parse(db.pendingBatches.get(phone).items_json)[0].cents,5000);
  await sendWebhook(e,'confirm001',phone,'SIM',jobs);
  assert.equal(db.entries.length,1);assert.equal(db.entries[0].category,'Alimentação');
  await sendWebhook(e,'confirm001',phone,'SIM',jobs);
@@ -140,7 +145,7 @@ test('voice WhatsApp media is transcribed privately and still requires SIM',asyn
   const raw=JSON.stringify(body),signature='sha256='+createHmac('sha256',secret).update(raw).digest('hex');
   const resp=await handleRequest(new Request('https://bolso.test/webhook',{method:'POST',headers:{'x-hub-signature-256':signature},body:raw}),e,{waitUntil:p=>jobs.push(p)});
   assert.equal(resp.status,200);await Promise.all(jobs);
-  assert.equal(db.entries.length,0,'voice draft not auto committed');assert.equal(db.pending.get(phone).cents,6000);assert.equal(db.pending.get(phone).category,'Transporte');
+  assert.equal(db.entries.length,0,'voice draft not auto committed');assert.equal(JSON.parse(db.pendingBatches.get(phone).items_json)[0].cents,6000);assert.equal(JSON.parse(db.pendingBatches.get(phone).items_json)[0].category,'Transporte');
   await sendWebhook(e,'voiceconf1',phone,'SIM',jobs);assert.equal(db.entries.length,1);
  }finally{globalThis.fetch=fetchBefore;}
 });
@@ -151,4 +156,82 @@ test('voice without speech key replies with guidance, no transaction created',as
  await Promise.all(jobs);assert.equal(db.pending.size,0);assert.ok(sent.some(x=>x.text.body.includes('áudio está desativado')));
 });
 
+
+const example='Paguei 100 reais de água, 100 reais de luz, 100 reais de internet e recebi 3.900 reais de salário';
+test('multi-item voice with three expenses and salary extracted independently',()=>{
+ const batch=interpretFinanceBatch(example,'2026-10-08');
+ assert.equal(batch.error,null);assert.equal(batch.items.length,4);
+ assert.deepEqual(batch.items.map(x=>[x.kind,x.cents,x.category,x.title]),[
+  ['expense',10000,'Moradia','Água'],['expense',10000,'Moradia','Luz'],
+  ['expense',10000,'Moradia','Internet'],['income',390000,'Entradas','Salário']]);
+});
+test('number words plus short-form commands without punctuation',()=>{
+ const one=interpretFinanceBatch('cem reais de agua cem de luz cem reais de internet recebi tres mil e novecentos reais de salario','2026-10-08');
+ assert.equal(one.error,null);assert.equal(one.items.length,4);
+ assert.deepEqual(one.items.map(x=>x.cents),[10000,10000,10000,390000]);
+ const two=interpretFinanceBatch('água 100, luz 100, internet 100, salário 3900','2026-10-08');
+ assert.deepEqual(two.items.map(x=>x.title),['Água','Luz','Internet','Salário']);
+});
+test('ask for clarification instead of dividing one amount among multiple bills',()=>{
+ assert.match(interpretFinanceBatch('gastei 100 de água e luz').error,/cada uma/);
+ assert.equal(interpretFinanceBatch('gastei nada').items.length,0);
+ assert.ok(interpretFinanceBatch(Array.from({length:13},(_,i)=>`${i+1} de agua`).join(', ')).error);
+});
+test('complete multi-message confirmation is atomic, deduplicated and device-syncable',async()=>{
+ const db=new FakeDatabase(),e=env(db),jobs=[],headers={Authorization:'Bearer '+token};sent=[];
+ await sendWebhook(e,'batch001',phone,example,jobs);
+ assert.equal(db.entries.length,0);const batch=JSON.parse(db.pendingBatches.get(phone).items_json);
+ assert.equal(batch.length,4);assert.equal(batch[3].kind,'income');
+ const preview=sent.at(-1).text.body;
+ assert.match(preview,/Entradas:/);assert.match(preview,/Despesas:/);assert.match(preview,/Internet/);
+ await sendWebhook(e,'approve01',phone,'SIM',jobs);
+ assert.equal(db.entries.length,4);assert.equal(db.entries.filter(x=>x.kind==='expense').length,3);
+ assert.equal(db.entries.filter(x=>x.kind==='income').length,1);
+ assert.equal(db.entries.filter(x=>x.category==='Moradia').length,3);
+ assert.equal(db.pendingBatches.size,0);
+ await sendWebhook(e,'approve02',phone,'SIM',jobs);assert.equal(db.entries.length,4);
+ const sync=await handleRequest(new Request('https://bolso.test/v1/device/transactions?cursor=0',{headers}),e);
+ // Not yet linked: auth test ensures the endpoint enforces pairing.
+ assert.equal(sync.status,401);
+});
+test('salary before expenses and single-amount ambiguity are handled',()=>{
+ for (const phrase of [
+  'recebi salário de 3900 e paguei 100 de água',
+  'recebi 3900 de salário e paguei 100 de água',
+  'salário 3900 água 100',
+ ]) {
+  const result=interpretFinanceBatch(phrase,'2026-10-08');
+  assert.equal(result.error,null,phrase);
+  assert.deepEqual(result.items.map(x=>[x.kind,x.cents]),[['income',390000],['expense',10000]],phrase);
+ }
+});
+test('voice from Meta recognizes four movements in one audio, pending confirmation',async()=>{
+ const db=new FakeDatabase(),e={...env(db),GROQ_API_KEY:'groq-test'},jobs=[];
+ const fetchBefore=globalThis.fetch;
+ globalThis.fetch=async(url,options)=>{
+  if(String(url).endsWith('/messages')){sent.push(JSON.parse(options.body));return new Response('{}',{status:200});}
+  if(String(url).endsWith('/123456789098765'))return Response.json({url:'https://lookaside.fbsbx.com/secure-media',file_size:16,mime_type:'audio/ogg'});
+  if(String(url)==='https://lookaside.fbsbx.com/secure-media')return new Response(new Uint8Array([0x4f,0x67,0x67,0x53,0]));
+  if(String(url).includes('api.groq.com/openai/v1/audio/transcriptions')){assert.equal(options.body.get('language'),'pt');return Response.json({text:example});}
+  throw Error('unexpected external request '+url);
+ };
+ try {
+  const payload={object:'whatsapp_business_account',entry:[{changes:[{field:'messages',value:{metadata:{phone_number_id:'1234567890'},messages:[{id:'wamid.voicemulti0001',from:phone,type:'audio',audio:{id:'123456789098765'}}]}}]}]};
+  const raw=JSON.stringify(payload),sig='sha256='+createHmac('sha256',secret).update(raw).digest('hex');sent=[];
+  const resp=await handleRequest(new Request('https://bolso.test/webhook',{method:'POST',headers:{'x-hub-signature-256':sig},body:raw}),e,{waitUntil:job=>jobs.push(job)});
+  assert.equal(resp.status,200);await Promise.all(jobs);
+  assert.equal(db.entries.length,0);assert.equal(JSON.parse(db.pendingBatches.get(phone).items_json).length,4);
+  assert.match(sent.at(-1).text.body,/R\$\s*3\.900,00/);
+  await sendWebhook(e,'audiosim001',phone,'SIM',jobs);
+  assert.equal(db.entries.length,4);
+  assert.deepEqual(db.entries.map(x=>x.cents),[10000,10000,10000,390000]);
+ }finally{globalThis.fetch=fetchBefore;}
+});
+test('batch cancellation does not write transactions',async()=>{
+ const db=new FakeDatabase(),e=env(db),jobs=[];
+ await sendWebhook(e,'batchcan1',phone,example,jobs);
+ assert.equal(db.pendingBatches.size,1);
+ await sendWebhook(e,'batchcan2',phone,'NÃO',jobs);
+ assert.equal(db.pendingBatches.size,0);assert.equal(db.entries.length,0);
+});
 after(()=>{globalThis.fetch=realFetch;});

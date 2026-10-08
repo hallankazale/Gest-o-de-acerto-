@@ -101,6 +101,9 @@ public final class MainActivity extends Activity {
         @JavascriptInterface public void saveEntry(String kind, long cents, String title, String category, String date, String source) {
             task(() -> database.saveEntry(kind, cents, title, category, date, source), "Lançamento salvo");
         }
+        @JavascriptInterface public void saveBatch(String itemsJson, String source) {
+            task(() -> database.saveBatch(itemsJson, source), "Lançamentos do áudio salvos");
+        }
         @JavascriptInterface public void updateEntry(long id, String kind, long cents, String title, String category, String date) {
             task(() -> database.updateEntry(id, kind, cents, title, category, date), "Lançamento atualizado");
         }
@@ -136,7 +139,7 @@ public final class MainActivity extends Activity {
         intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "pt-BR");
         intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "pt-BR");
         intent.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true);
-        intent.putExtra(RecognizerIntent.EXTRA_PROMPT, "Exemplo: gastei 50 reais de bolachas e salgadinhos");
+        intent.putExtra(RecognizerIntent.EXTRA_PROMPT, "Exemplo: 100 de água, 100 de luz, recebi 3900 de salário");
         try { startActivityForResult(intent, SPEECH_REQUEST); }
         catch (ActivityNotFoundException e) { js("window.Bolso.showError('Seu celular não tem serviço de reconhecimento de voz. Use o campo de texto.')"); }
     }

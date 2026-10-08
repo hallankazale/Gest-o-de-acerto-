@@ -1,4 +1,4 @@
-# Bolso+ WhatsApp — Backend oficial v1.2.0
+# Bolso+ WhatsApp — Backend oficial v1.3.0
 
 Integração oficial **WhatsApp Business Platform Cloud API** com Cloudflare Workers + D1. O APK funciona offline para os registros locais; a conexão com WhatsApp usa HTTPS e requer um backend publicado.
 
@@ -7,7 +7,7 @@ Integração oficial **WhatsApp Business Platform Cloud API** com Cloudflare Wor
 ```
 WhatsApp pessoal → Meta Cloud API → POST /webhook [HMAC SHA-256]
                               → D1 inbox/retry → parser português
-                              → WhatsApp (prévia, SIM/NÃO) → D1 transactions
+                              → WhatsApp (prévia, SIM/NÃO) → D1 transactions individuais (até 12 por áudio)
 Android Bolso+ → HTTPS /v1/device/pair/start → código de vínculo (10 min)
 WhatsApp 'VINCULAR CÓDIGO' → D1 devices (identidade WhatsApp)
 Android Bolso+ → HTTPS /v1/device/transactions → SQLite local (remote_id UNIQUE)
@@ -16,7 +16,7 @@ Android Bolso+ → HTTPS /v1/device/transactions → SQLite local (remote_id UNI
 - **Nunca coloque chaves Meta, Groq ou D1 no APK ou no GitHub.** Token do próprio aparelho fica criptografado com Android Keystore.
 - Só aceita eventos com assinatura `X-Hub-Signature-256` válida, número remetente na lista `ALLOWED_WA_IDS` e `phone_number_id` configurado.
 - Cada número WhatsApp acessa apenas suas transações. Código de vínculo aleatório expira em 10 minutos, com hashes no D1.
-- **Sem gravação automática:** o agente pede `SIM` antes de registrar; `NÃO` cancela.
+- **Sem gravação automática:** o agente separa até 12 despesas/entradas por mensagem, mostra valores e pede `SIM` antes de registrar todo o lote; `NÃO` cancela.
 - Mensagens repetidas da Meta são ignoradas; D1 usa IDs remotos únicos; importação não duplica.
 - Áudios são baixados temporariamente pelo Worker da URL autenticada da Meta e encaminhados **à Groq** para transcrição somente se `GROQ_API_KEY` estiver configurada. O áudio **não é armazenado** no D1. A transcrição pode conter erros: confira antes de confirmar.
 - Raw text de mensagens aguardando processamento fica temporariamente em `inbox` para poder repetir após falhas; não registra payload nos logs. Limpeza periódica recomendada.
@@ -92,7 +92,7 @@ A rota `GET /health` retorna uma confirmação técnica sem expor dados nem segr
 | --- | --- |
 | `Gastei 50 reais de bolachas` | Prévia e `SIM` ou `NÃO` |
 | `Recebi 200 reais de trabalho` | Prévia de entrada |
-| Mensagem de áudio | Transcrição (quando chave Groq configurada) e prévia |
+| Mensagem de áudio | Transcrição (quando chave Groq configurada); divide várias contas/entradas no mesmo áudio e apresenta prévia item a item |
 | `RESUMO` | Totais **apenas** dos lançamentos do WhatsApp |
 | `EXTRATO` | Últimos 8 lançamentos do WhatsApp |
 | `AJUDA` | Comandos disponíveis |
@@ -117,3 +117,15 @@ node tests/logic.test.cjs
 ```
 
 Coberturas: verificação HMAC, challenge Meta, acesso negado sem credencial, números allowlist, interpretação BRL, vínculo temporário, confirmação `SIM`, idempotência de webhook, isolamento por usuário, cursor de sincronização, desvinculação. Faça **teste com duas contas WhatsApp diferentes e aparelho real** antes de comercializar. Para uso em múltiplos usuários, adicione observabilidade, backups, monitoramento de custos, política de retenção LGPD e controle de consentimento.
+
+## Novidade v1.3: várias despesas e entradas em um áudio
+
+Exemplo: **“Paguei 100 de água, 100 de luz, 100 de internet e recebi 3900 de salário.”**
+
+O servidor transcreve a mensagem (Groq opcional), separa **4 lançamentos** (Água, Luz e Internet como despesas; Salário como entrada) e responde com uma prévia e os totais. Somente `SIM` grava as 4 operações de modo transacional; `NÃO` cancela tudo. IDs de origem por item impedem duplicação mesmo com reentrega de webhook. No app Android v1.3, o microfone local também apresenta uma revisão editável dos quatro itens e grava o lote em uma transação SQLite.
+
+**ATENÇÃO SOBRE O SALÁRIO:** se a renda mensal fixa já tiver sido cadastrada no aplicativo, adicionar o mesmo salário como entrada avulsa fará a renda daquele mês ser contada duas vezes. Escolha um método de contabilização para o salário e confira o painel.
+
+A IA de transcrição pode errar números e nomes; por isso **nenhum item é registrado sem confirmação**. Casos ambíguos (duas contas e só um preço) pedem correção em vez de distribuição automática. O parser é determinístico para reduzir custo e preservar auditabilidade; ele não promete entender toda formulação natural.
+
+**Atualização do servidor já publicado:** execute `npx wrangler d1 migrations apply bolsoplus_whatsapp --remote` para aplicar `0002_multi_entry_audio.sql`, depois `npx wrangler deploy`. Não substitua nem apague a base D1 existente.

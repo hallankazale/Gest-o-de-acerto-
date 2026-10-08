@@ -30,3 +30,9 @@
 .wa-action:disabled{opacity:.35}.wa-card .reset-link{margin-top:8px}.wa-info{padding:18px;border:1px solid #254658;border-radius:19px;background:#132938;margin-bottom:24px}
 .wa-info p{margin:12px 0;color:#b5ccd2;font-size:12px;line-height:1.7}.wa-info .wa-warning{color:#e2c7a0;font-size:11px;margin-top:20px}
 @media(max-width:360px){.wa-card{padding:17px 12px}.wa-actions{flex-direction:column}.wa-code-box strong{font-size:17px}.bottom-nav{padding-left:10px;padding-right:10px}}
+
+/* Multi-transaction voice review: readable, touch-friendly inputs without horizontal scroll. */
+.batch-item{margin:15px 0;padding:14px;border:1px solid rgba(135,180,185,.24);border-radius:16px;background:rgba(11,35,49,.55)}
+.batch-header{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:10px;color:#e7f7f2}
+.batch-header span{color:#8ce2bd;font-weight:700}
+.batch-totals{margin:10px 0;color:#dcf4e9;font-size:.86rem;line-height:1.5}

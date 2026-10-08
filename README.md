@@ -48,3 +48,12 @@ Faça testes manuais no celular: abertura sem nenhum dado, renda zero, lançamen
 ## WhatsApp Business Cloud API (v1.2.0)
 
 Nova aba **WhatsApp** no Android com vínculo de código temporário e importação segura de gastos após confirmação `SIM`. O backend fica em `whatsapp-worker/` e tem instruções de Cloudflare/Meta, esquema D1 e testes de segurança no próprio diretório. A API não inicia sozinha: configure Meta + Cloudflare + segredos para usá-la. Sem servidor ativo, o aplicativo continua funcionando offline.
+
+
+## Versão 1.3 — múltiplos gastos e renda em um único áudio
+
+- Assistente de WhatsApp separa até 12 lançamentos no mesmo texto/áudio e pede confirmação do lote.
+- Nova migração D1 `whatsapp-worker/migrations/0002_multi_entry_audio.sql` preserva registros antigos.
+- O microfone do Android também permite revisar, editar, categorizar e salvar múltiplas despesas/entradas de uma única vez, atomicamente.
+- Para ativar no WhatsApp, publique o Worker na sua conta Cloudflare; **o APK sozinho não recebe mensagens da Meta**.
+- Salários enviados como entrada avulsa contam como entrada adicional. Evite contar a mesma renda também na configuração de renda fixa.

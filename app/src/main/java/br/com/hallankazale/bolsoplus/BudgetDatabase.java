@@ -90,6 +90,32 @@ final class BudgetDatabase extends SQLiteOpenHelper {
         values.put("occurred_on", day); values.put("source", "voice".equals(source) ? "voice" : "text");
         getWritableDatabase().insertOrThrow("entries", null, values);
     }
+    /** Save one spoken batch as a single transaction. No partial inserts after validation failure. */
+    void saveBatch(String json, String source) {
+        final JSONArray items;
+        try { items = new JSONArray(json); }
+        catch (JSONException e) { throw new IllegalArgumentException("Lote inválido"); }
+        if (items.length()<1 || items.length()>12) throw new IllegalArgumentException("Limite de 12 lançamentos por áudio");
+        final SQLiteDatabase db=getWritableDatabase();
+        db.beginTransaction();
+        try {
+            for (int i=0;i<items.length();i++) {
+                final JSONObject item=items.getJSONObject(i);
+                final String kind=item.getString("kind");
+                if (!"expense".equals(kind) && !"income".equals(kind)) throw new IllegalArgumentException("Tipo inválido");
+                final long cents=item.getLong("cents");
+                requireMoney(cents);
+                final String day=item.getString("date"); requireDay(day);
+                final ContentValues values=new ContentValues();
+                values.put("kind",kind);values.put("cents",cents);values.put("title",checked(item.getString("title"),"Descrição"));
+                values.put("category",checked(item.getString("category"),"Categoria"));
+                values.put("occurred_on",day);values.put("source","voice".equals(source)?"voice":"text");
+                db.insertOrThrow("entries",null,values);
+            }
+            db.setTransactionSuccessful();
+        } catch (JSONException e) {throw new IllegalArgumentException("Lançamento inválido");}
+        finally {db.endTransaction();}
+    }
     void updateEntry(long id, String kind, long cents, String title, String category, String day) {
         if (id < 1) throw new IllegalArgumentException("ID inválido");
         if (!"income".equals(kind) && !"expense".equals(kind)) throw new IllegalArgumentException("Tipo inválido");

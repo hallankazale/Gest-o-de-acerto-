@@ -58,4 +58,19 @@ test('sem contas ou rendas de exemplo nos arquivos distribuídos', () => {
   assert.match(ui,/incomeCents: 0, recurring: \[\], entries: \[\]/);assert.doesNotMatch(ui,/incomeCents: 390000/);
   assert.match(html,/id="onboarding"/); assert.match(html,/id="resetButton"/);
 });
+test('áudio local contém quatro contas independentes e renda', () => {
+  const fs=require('node:fs');const vm=require('node:vm');
+  const source=fs.readFileSync(require('node:path').join(__dirname,'../app/src/main/assets/multi.js'),'utf8');
+  const context={window:{},Intl,Date};vm.runInNewContext(source,context);
+  const result=context.window.BolsoBatch.interpretFinanceBatch('100 de agua 100 de luz 100 de internet recebi 3900 salario','2026-10-08');
+  assert.equal(result.error,null);assert.equal(result.items.length,4);
+  assert.deepEqual(Array.from(result.items.map(x=>x.cents)),[10000,10000,10000,390000]);
+  assert.deepEqual(Array.from(result.items.map(x=>x.title)),['Água','Luz','Internet','Salário']);
+  assert.equal(result.items[3].kind,'income');
+});
+test('não associa um valor único a duas contas distintas', () => {
+  const fs=require('node:fs');const vm=require('node:vm');
+  const context={window:{},Intl,Date};vm.runInNewContext(fs.readFileSync(require('node:path').join(__dirname,'../app/src/main/assets/multi.js'),'utf8'),context);
+  assert.ok(context.window.BolsoBatch.interpretFinanceBatch('100 de água e luz','2026-10-08').error);
+});
 console.log(`\n${tested} testes passaram`);

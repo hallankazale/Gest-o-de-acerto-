@@ -1,3 +1,5 @@
+(function (root) {
+'use strict';
 /**
  * Brazilian Portuguese financial dictation parser.
  * One transcript may contain several independent transactions (income + expenses).
@@ -19,7 +21,7 @@ const quickLabels = [
   ['internet','Internet','Moradia'],['aluguel','Aluguel','Moradia'],
   ['gasolina','Gasolina','Transporte'],['mercado','Mercado','Alimentação'],
 ];
-export const normalize = value => String(value??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
+const normalize = value => String(value??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
 const units={zero:0,um:1,uma:1,dois:2,duas:2,tres:3,quatro:4,cinco:5,seis:6,sete:7,oito:8,nove:9,dez:10,onze:11,doze:12,treze:13,quatorze:14,catorze:14,quinze:15,dezesseis:16,dezessete:17,dezoito:18,dezenove:19};
 const tens={vinte:20,trinta:30,quarenta:40,cinquenta:50,sessenta:60,setenta:70,oitenta:80,noventa:90};
 const hundreds={cem:100,cento:100,duzentos:200,trezentos:300,quatrocentos:400,quinhentos:500,seiscentos:600,setecentos:700,oitocentos:800,novecentos:900};
@@ -90,7 +92,7 @@ function dateOf(s,today){let date=today||todayBrazil();if(/\bontem\b/.test(s)){c
  * Returns {items, error:null} or {items:[],error}.
  * Limit 12 items/utterance to control WhatsApp reply size, mishearings and spend.
  */
-export function interpretFinanceBatch(message,today){
+function interpretFinanceBatch(message,today){
  const text=normalize(message);
  if(!text||text.length>1500)return {items:[],error:'Envie uma mensagem de até 1.500 caracteres.'};
  const found=amounts(text);
@@ -126,9 +128,12 @@ export function interpretFinanceBatch(message,today){
  return {items:items.map(({_picked,...item})=>item),error:null};
 }
 /** Backward-compatible single-expense API for existing integrations. */
-export function interpretFinance(message,today){
+function interpretFinance(message,today){
  const result=interpretFinanceBatch(message,today);
  return result.error||result.items.length!==1?null:result.items[0];
 }
-export function brl(cents){return new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(cents/100);}
-export function todayBrazil(now=new Date()){return new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit'}).format(now);}
+function brl(cents){return new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(cents/100);}
+function todayBrazil(now=new Date()){return new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit'}).format(now);}
+
+root.BolsoBatch={interpretFinanceBatch,todayBrazil,normalize,brl};
+})(window);

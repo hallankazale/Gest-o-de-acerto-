@@ -134,11 +134,47 @@
       if (date.slice(0,7) !== month) load(date.slice(0,7));
     });
   }
+  /** Review the entire utterance before writing; this is one atomic SQLite operation. */
+  function batchSheet(items) {
+    const cats = ['Entradas', ...Logic.categories.map(c => c.name)];
+    const rows = items.map((item,i) => `<section class="batch-item" data-batch="${i}">
+      <div class="batch-header"><strong>${i+1}. ${item.kind==='income'?'Entrada':'Despesa'}</strong><span>${safe(currency(item.cents))}</span></div>
+      <div class="field-grid"><label class="field"><span>TIPO</span><select class="batch-kind"><option value="expense" ${item.kind==='expense'?'selected':''}>Despesa</option><option value="income" ${item.kind==='income'?'selected':''}>Entrada</option></select></label><label class="field"><span>VALOR R$</span><input class="batch-amount" required inputmode="decimal" value="${safe(formatEdit(item.cents))}"/></label></div>
+      <label class="field"><span>DESCRIÇÃO</span><input class="batch-name" required maxlength="160" value="${safe(item.title)}"/></label>
+      <div class="field-grid"><label class="field"><span>CATEGORIA</span><select class="batch-category">${cats.map(c=>`<option ${c===item.category?'selected':''}>${safe(c)}</option>`).join('')}</select></label><label class="field"><span>DATA</span><input class="batch-date" type="date" required value="${safe(item.date)}"/></label></div>
+    </section>`).join('');
+    const expense=items.filter(x=>x.kind==='expense').reduce((n,x)=>n+x.cents,0);
+    const income=items.filter(x=>x.kind==='income').reduce((n,x)=>n+x.cents,0);
+    openSheet(`${items.length} lançamentos identificados`,
+      `<p class="preview-callout">${icon('check')}Confira a transcrição. Nenhum valor será salvo antes de confirmar.</p>
+      <p class="batch-totals">Salário lançado aqui conta como entrada extra; não cadastre novamente a mesma renda fixa.</p>
+      <p class="batch-totals">Despesas: ${safe(currency(expense))} · Entradas: ${safe(currency(income))}</p>
+      <form id="batchForm">${rows}<button class="primary-button" type="submit">${icon('check')} Confirmar os ${items.length} lançamentos</button></form>`,
+      'REVISÃO DO ÁUDIO');
+    $('batchForm').addEventListener('submit',e=>{
+      e.preventDefault();
+      const parsed=[];
+      for(const row of $('batchForm').querySelectorAll('[data-batch]')) {
+        const kind=row.querySelector('.batch-kind').value;
+        const cents=Logic.parseAmount(row.querySelector('.batch-amount').value);
+        const title=row.querySelector('.batch-name').value.trim();
+        const date=row.querySelector('.batch-date').value;
+        const category=kind==='income'?'Entradas':row.querySelector('.batch-category').value;
+        if(!cents||!title||title.length>160||!Logic.validDay(date))return showError('Confira os valores, datas e descrições antes de salvar');
+        parsed.push({kind,cents,title,category,date});
+      }
+      if(native) window.BolsoNative.saveBatch(JSON.stringify(parsed),pendingSource);
+      else previewUpdate(db => {for(const [i,x] of parsed.entries())db.entries.push({id:Date.now()*100+i,...x,source:pendingSource});});
+      closeSheet();$('smartInput').value='';
+      if(!native)toast(`${parsed.length} lançamentos salvos`);
+    });
+  }
   function interpret(text, source) {
-    const draft = Logic.parseMessage(text,today());
-    if (draft.error) return showError(draft.error);
+    const batch = window.BolsoBatch.interpretFinanceBatch(text,today());
+    if (batch.error) return showError(batch.error);
     pendingSource = source;
-    entrySheet(draft);
+    if (batch.items.length===1) entrySheet({...batch.items[0],description:batch.items[0].title});
+    else batchSheet(batch.items);
   }
   function incomeSheet() {
     openSheet('Editar renda mensal',`<form id="incomeForm"><label class="field"><span>RENDA FIXA EM R$</span><input id="incomeEdit" required inputmode="decimal" value="${safe(formatEdit(snapshot.incomeCents))}"/></label><div class="preview-callout">${icon('spark')}A renda será utilizada em todos os meses. Entradas extras ficam no histórico.</div><button class="primary-button" type="submit">${icon('check')} Salvar renda</button></form>`, 'CONFIGURAÇÃO DO ORÇAMENTO');

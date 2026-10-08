@@ -1,4 +1,4 @@
-import {interpretFinance,brl,todayBrazil,normalize} from './finance.mjs';
+import {interpretFinanceBatch,brl,todayBrazil,normalize} from './finance.mjs';
 
 const json = (value, code=200) => new Response(JSON.stringify(value),{status:code,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
 const plain = (value,code=200) => new Response(value,{status:code,headers:{'Content-Type':'text/plain; charset=utf-8','Cache-Control':'no-store'}});
@@ -68,10 +68,11 @@ async function voiceToText(env,mediaId){
  const mime=String(meta.mime_type||'audio/ogg').split(';')[0];
  const extension=mime==='audio/mpeg'?'mp3':mime==='audio/mp4'?'m4a':mime==='audio/webm'?'webm':'ogg';
  const form=new FormData();form.append('model','whisper-large-v3-turbo');form.append('language','pt');
+ form.append('prompt','Lançamentos financeiros em reais: salário, água, luz, internet, aluguel, pensão, alimentação e transporte. Preserve cada valor e cada conta.');
  form.append('file',new Blob([bytes],{type:mime}),`audio.${extension}`);
  const transcribed=await fetch('https://api.groq.com/openai/v1/audio/transcriptions',{method:'POST',headers:{Authorization:`Bearer ${env.GROQ_API_KEY}`},body:form});
  if(!transcribed.ok)throw new Error(`Falha na transcrição HTTP ${transcribed.status}`);
- const data=await transcribed.json();return typeof data.text==='string'?data.text.slice(0,300):null;
+ const data=await transcribed.json();return typeof data.text==='string'?data.text.slice(0,1500):null;
 }
 async function handleText(env,phone,message,messageId){
  const input=message.trim(),normalized=normalize(input);
@@ -87,7 +88,7 @@ async function handleText(env,phone,message,messageId){
    await sendWhatsApp(env,phone,'✅ WhatsApp vinculado ao Bolso+! Envie um gasto por texto ou áudio. Confirme com SIM; sincronize no aplicativo para visualizar.');return;
  }
  if(normalized==='ajuda'||normalized==='menu'||normalized==='oi'||normalized==='ola'){
-  await sendWhatsApp(env,phone,'👋 Bolso+ Financeiro\n• “gastei 50 reais de bolachas”\n• “recebi 200 reais de serviço”\n• Envie áudio com o gasto\n• SIM / NÃO para confirmar\n• RESUMO para gastos lançados aqui\n• EXTRATO para últimos lançamentos\n• APAGAR TUDO para excluir dados desta conta\n\nOs lançamentos do celular só entram nos totais do app: este chat soma apenas os gastos registrados aqui.');return;
+  await sendWhatsApp(env,phone,'👋 Bolso+ Financeiro\n• “gastei 50 reais de bolachas”\n• “recebi 200 reais de serviço”\n• Um áudio pode conter várias contas e salário: 100 de água, 100 de luz e recebi 3900 de salário\n• SIM / NÃO para confirmar\n• RESUMO para gastos lançados aqui\n• EXTRATO para últimos lançamentos\n• APAGAR TUDO para excluir dados desta conta\n\nOs lançamentos do celular só entram nos totais do app: este chat soma apenas os gastos registrados aqui.');return;
  }
  if(normalized==='resumo'){
   const month=todayBrazil().slice(0,7);
@@ -100,6 +101,7 @@ async function handleText(env,phone,message,messageId){
   const entries=result.results||[];await sendWhatsApp(env,phone,entries.length?`🧾 Últimos lançamentos enviados aqui:\n${entries.map(v=>`${v.kind==='expense'?'−':'+'} ${brl(v.cents)} · ${v.title} (${v.occurred_on})`).join('\n')}`:'Ainda não há lançamentos pelo WhatsApp.');return;
  }
  if(normalized==='apagar tudo'){
+  await env.DB.prepare('DELETE FROM pending_batches WHERE wa_id=?').bind(phone).run();
   await env.DB.prepare('INSERT OR REPLACE INTO pending(wa_id,kind,cents,title,category,occurred_on,source_message_id,expires_at) VALUES(?,?,?,?,?,?,?,?)').bind(phone,'delete',0,'','','',messageId,nowSeconds()+300).run();
   await sendWhatsApp(env,phone,'⚠️ Excluir permanentemente TODOS os lançamentos financeiros deste WhatsApp? Responda APAGAR CONFIRMAR em até 5 minutos. O banco do celular não será apagado.');return;
  }
@@ -107,32 +109,56 @@ async function handleText(env,phone,message,messageId){
   const row=await env.DB.prepare('SELECT kind,expires_at FROM pending WHERE wa_id=?').bind(phone).first();
   if(row?.kind==='delete'&&row.expires_at>nowSeconds()){
     await env.DB.batch([
-      env.DB.prepare('DELETE FROM transactions WHERE wa_id=?').bind(phone),env.DB.prepare('DELETE FROM pending WHERE wa_id=?').bind(phone)
+      env.DB.prepare('DELETE FROM transactions WHERE wa_id=?').bind(phone),env.DB.prepare('DELETE FROM pending WHERE wa_id=?').bind(phone),env.DB.prepare('DELETE FROM pending_batches WHERE wa_id=?').bind(phone)
     ]);
     await sendWhatsApp(env,phone,'🗑️ Seus lançamentos deste WhatsApp foram excluídos. Os registros já importados no celular devem ser apagados no app, se desejar.');return;
   }
   await sendWhatsApp(env,phone,'Não há exclusão pendente. Envie APAGAR TUDO para iniciar.');return;
  }
  if(normalized==='nao'||normalized==='não'||normalized==='cancelar'){
-  await env.DB.prepare('DELETE FROM pending WHERE wa_id=?').bind(phone).run();
+  await env.DB.batch([env.DB.prepare('DELETE FROM pending WHERE wa_id=?').bind(phone),env.DB.prepare('DELETE FROM pending_batches WHERE wa_id=?').bind(phone)]);
   await sendWhatsApp(env,phone,'Tudo bem! Nenhum gasto novo foi registrado.');return;
  }
  if(normalized==='sim'||normalized==='confirmar'){
+  const batch=await env.DB.prepare('SELECT items_json,source_message_id,expires_at FROM pending_batches WHERE wa_id=?').bind(phone).first();
+  if(batch && batch.expires_at>nowSeconds()){
+   // Repeat webhook deliveries are safe: source_message_id + item ordinal has a UNIQUE constraint.
+   const items=JSON.parse(batch.items_json);
+   if(!Array.isArray(items)||items.length<1||items.length>12)throw new Error('Lote inválido');
+   const statements=items.map((item,i)=>env.DB.prepare('INSERT OR IGNORE INTO transactions(id,wa_id,kind,cents,title,category,occurred_on,source_message_id) VALUES(?,?,?,?,?,?,?,?)')
+      .bind(crypto.randomUUID(),phone,item.kind,item.cents,item.title,item.category,item.date,`${batch.source_message_id}:${i+1}`));
+   statements.push(env.DB.prepare('DELETE FROM pending_batches WHERE wa_id=? AND source_message_id=?').bind(phone,batch.source_message_id));
+   await env.DB.batch(statements); // Cloudflare D1 batch executes atomically; no partial set is committed.
+   const income=items.filter(x=>x.kind==='income').reduce((s,x)=>s+x.cents,0);
+   const expense=items.filter(x=>x.kind==='expense').reduce((s,x)=>s+x.cents,0);
+   await sendWhatsApp(env,phone,`✅ ${items.length} lançamento(s) registrado(s)!\nEntradas: ${brl(income)}\nDespesas: ${brl(expense)}\nAbra Bolso+ → WhatsApp → Sincronizar agora.`);return;
+  }
+  // Preserve confirmation of a pending single posting created on v1.2 prior to migration.
   const pending=await env.DB.prepare('SELECT * FROM pending WHERE wa_id=?').bind(phone).first();
   if(!pending||pending.expires_at<=nowSeconds()||pending.kind==='delete'){
     await sendWhatsApp(env,phone,'Nenhum lançamento pendente. Envie o valor e a descrição primeiro.');return;
   }
-  const id=crypto.randomUUID();
-  await env.DB.prepare('INSERT OR IGNORE INTO transactions(id,wa_id,kind,cents,title,category,occurred_on,source_message_id) VALUES(?,?,?,?,?,?,?,?)')
-    .bind(id,phone,pending.kind,pending.cents,pending.title,pending.category,pending.occurred_on,pending.source_message_id).run();
-  await env.DB.prepare('DELETE FROM pending WHERE wa_id=? AND source_message_id=?').bind(phone,pending.source_message_id).run();
-  await sendWhatsApp(env,phone,`✅ Registrado: ${brl(pending.cents)} · ${pending.category}\n${pending.title}\nAbra o Bolso+ e toque em Sincronizar WhatsApp.`);return;
+  await env.DB.batch([
+   env.DB.prepare('INSERT OR IGNORE INTO transactions(id,wa_id,kind,cents,title,category,occurred_on,source_message_id) VALUES(?,?,?,?,?,?,?,?)')
+     .bind(crypto.randomUUID(),phone,pending.kind,pending.cents,pending.title,pending.category,pending.occurred_on,pending.source_message_id),
+   env.DB.prepare('DELETE FROM pending WHERE wa_id=? AND source_message_id=?').bind(phone,pending.source_message_id)
+  ]);
+  await sendWhatsApp(env,phone,`✅ Registrado: ${brl(pending.cents)} · ${pending.category}\n${pending.title}\nAbra Bolso+ e toque em Sincronizar WhatsApp.`);return;
  }
- const candidate=interpretFinance(input,todayBrazil());
- if(!candidate){await sendWhatsApp(env,phone,'Não entendi o valor. Exemplo: “gastei 50 reais de bolachas”. Para comandos, escreva AJUDA.');return;}
- await env.DB.prepare('INSERT OR REPLACE INTO pending(wa_id,kind,cents,title,category,occurred_on,source_message_id,expires_at) VALUES(?,?,?,?,?,?,?,?)')
- .bind(phone,candidate.kind,candidate.cents,candidate.title,candidate.category,candidate.date,messageId,nowSeconds()+600).run();
- await sendWhatsApp(env,phone,`🧾 Confira:\n${candidate.kind==='income'?'Entrada':'Despesa'}: ${brl(candidate.cents)}\nCategoria: ${candidate.category}\nDescrição: ${candidate.title}\nData: ${candidate.date}\n\nResponda SIM para registrar ou NÃO para cancelar (10 minutos).`);
+ const candidate=interpretFinanceBatch(input,todayBrazil());
+ if(candidate.error){await sendWhatsApp(env,phone,`⚠️ Ainda não registrei nada. ${candidate.error}\nRepita a lista com o valor de cada conta.`);return;}
+ const items=candidate.items;
+ const income=items.filter(x=>x.kind==='income').reduce((s,x)=>s+x.cents,0);
+ const expense=items.filter(x=>x.kind==='expense').reduce((s,x)=>s+x.cents,0);
+ // A new utterance replaces the unconfirmed draft; no financial data is saved without approval.
+ await env.DB.batch([
+   env.DB.prepare('DELETE FROM pending WHERE wa_id=?').bind(phone),
+   env.DB.prepare('INSERT OR REPLACE INTO pending_batches(wa_id,source_message_id,items_json,expires_at) VALUES(?,?,?,?)')
+     .bind(phone,messageId,JSON.stringify(items),nowSeconds()+600)
+ ]);
+ const lines=items.map((x,i)=>`${i+1}. ${x.kind==='income'?'🟢 Entrada':'🔴 Despesa'}: ${x.title} — ${brl(x.cents)} (${x.category})`);
+ await sendWhatsApp(env,phone,`🧾 Encontrei ${items.length} lançamento(s):\n\n${lines.join('\n')}\n\nEntradas: ${brl(income)}\nDespesas: ${brl(expense)}\nSaldo destes lançamentos: ${brl(income-expense)}\n\nConfira cada valor. Salário enviado aqui conta como entrada extra no app; evite duplicar renda fixa. Responda SIM para salvar TODOS ou NÃO para cancelar (10 minutos).`);
+
 }
 async function processInbox(env,id){
  const stamp=nowSeconds(),lease=stamp-180;
@@ -179,7 +205,7 @@ async function intake(raw,env,ctx){
 }
 export async function handleRequest(request,env,ctx={waitUntil:p=>p.catch(()=>{})}){
  const url=new URL(request.url);
- if(url.pathname==='/health'&&request.method==='GET')return json({status:'ok',version:'1.2.0'});
+ if(url.pathname==='/health'&&request.method==='GET')return json({status:'ok',version:'1.3.0'});
  if(url.pathname==='/webhook'&&request.method==='GET'){
   const p=url.searchParams;
   return p.get('hub.mode')==='subscribe' && env.WA_VERIFY_TOKEN && p.get('hub.verify_token')===env.WA_VERIFY_TOKEN && p.has('hub.challenge')
@@ -204,6 +230,7 @@ export default {
   for(const row of rows.results||[])ctx.waitUntil(processInbox(env,row.id));
   ctx.waitUntil(env.DB.prepare("DELETE FROM received_events WHERE received_at<datetime('now','-3 days')").run());
   ctx.waitUntil(env.DB.prepare("DELETE FROM link_codes WHERE expires_at<?").bind(nowSeconds()).run());
+  ctx.waitUntil(env.DB.prepare("DELETE FROM pending_batches WHERE expires_at<?").bind(nowSeconds()).run());
   // Expire abandoned inbox payloads; only parsed financial postings persist.
   ctx.waitUntil(env.DB.prepare("DELETE FROM inbox WHERE (status='failed' OR attempts>=5) AND created_at<datetime('now','-1 day')").run());
  }
