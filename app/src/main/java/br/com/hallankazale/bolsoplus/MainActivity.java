@@ -32,6 +32,7 @@ public final class MainActivity extends Activity {
     private static final int EXPORT_REQUEST = 102;
     private WebView webView;
     private BudgetDatabase database;
+    private WhatsAppConnector whatsApp;
     private final ExecutorService disk = Executors.newSingleThreadExecutor();
     private String month = LocalDate.now().toString().substring(0,7);
 
@@ -40,6 +41,7 @@ public final class MainActivity extends Activity {
         getWindow().setStatusBarColor(android.graphics.Color.rgb(7,20,35));
         getWindow().setNavigationBarColor(android.graphics.Color.rgb(7,20,35));
         database = new BudgetDatabase(this);
+        whatsApp = new WhatsAppConnector(this);
         webView = new WebView(this);
         webView.setBackgroundColor(android.graphics.Color.rgb(7,20,35));
         // Android 15+ may draw content under system bars. Inset the WebView itself
@@ -111,7 +113,23 @@ public final class MainActivity extends Activity {
         @JavascriptInterface public void resetAll() { task(database::resetAll, "Dados apagados com sucesso"); }
         @JavascriptInterface public void speak() { runOnUiThread(MainActivity.this::requestSpeech); }
         @JavascriptInterface public void exportCsv() { runOnUiThread(MainActivity.this::requestExport); }
+        @JavascriptInterface public void waStart(String endpoint) {
+            disk.execute(() -> {try {waState(whatsApp.startPair(endpoint));}catch(Exception e){error(e);}});
+        }
+        @JavascriptInterface public void waStatus() {
+            disk.execute(() -> {try {waState(whatsApp.status());}catch(Exception e){error(e);}});
+        }
+        @JavascriptInterface public void waSync() {
+            disk.execute(() -> {try {
+                JSONObject result = whatsApp.sync(database); refresh(); waState(result);
+                js("window.Bolso.toast(" + JSONObject.quote(result.getInt("imported")+" lançamento(s) novo(s) do WhatsApp") + ")");
+            }catch(Exception e){error(e);}});
+        }
+        @JavascriptInterface public void waUnlink() {
+            disk.execute(() -> {try {waState(whatsApp.unlink());}catch(Exception e){error(e);}});
+        }
     }
+    private void waState(JSONObject result) { js("window.Bolso.waState(" + result.toString() + ")"); }
     private void requestSpeech() {
         Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
         intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);

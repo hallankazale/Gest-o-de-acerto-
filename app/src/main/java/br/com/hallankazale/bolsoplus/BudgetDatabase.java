@@ -18,12 +18,13 @@ final class BudgetDatabase extends SQLiteOpenHelper {
     private static final Pattern MONTH = Pattern.compile("\\d{4}-(0[1-9]|1[0-2])");
     private static final Pattern DAY = Pattern.compile("\\d{4}-(0[1-9]|1[0-2])-([0-2]\\d|3[01])");
 
-    BudgetDatabase(Context context) { super(context, DB_NAME, null, 2); }
+    BudgetDatabase(Context context) { super(context, DB_NAME, null, 3); }
 
     @Override public void onCreate(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE settings (name TEXT PRIMARY KEY, value TEXT NOT NULL)");
         db.execSQL("CREATE TABLE recurring (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, category TEXT NOT NULL, cents INTEGER NOT NULL CHECK(cents > 0), from_month TEXT, until_month TEXT)");
-        db.execSQL("CREATE TABLE entries (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL CHECK(kind IN ('expense','income')), cents INTEGER NOT NULL CHECK(cents > 0), title TEXT NOT NULL, category TEXT NOT NULL, occurred_on TEXT NOT NULL, source TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)");
+        db.execSQL("CREATE TABLE entries (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL CHECK(kind IN ('expense','income')), cents INTEGER NOT NULL CHECK(cents > 0), title TEXT NOT NULL, category TEXT NOT NULL, occurred_on TEXT NOT NULL, source TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, remote_id TEXT)");
+        db.execSQL("CREATE UNIQUE INDEX ux_entries_remote_id ON entries(remote_id)");
         // Start with no personal data. Never inject example debts or income in production.
         ContentValues setting = new ContentValues(); setting.put("name", "income_cents"); setting.put("value", "0");
         db.insertOrThrow("settings", null, setting);
@@ -31,6 +32,10 @@ final class BudgetDatabase extends SQLiteOpenHelper {
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
         // Preserve existing user entries on upgrades. Wiping is a separate, explicit user action.
         if (oldVersion > newVersion) throw new IllegalStateException("Versão de banco inválida");
+        if (oldVersion < 3) {
+            db.execSQL("ALTER TABLE entries ADD COLUMN remote_id TEXT");
+            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS ux_entries_remote_id ON entries(remote_id)");
+        }
     }
 
     private static void requireMoney(long cents) {
@@ -133,6 +138,36 @@ final class BudgetDatabase extends SQLiteOpenHelper {
             db.insertWithOnConflict("settings", null, setting, SQLiteDatabase.CONFLICT_REPLACE);
             db.setTransactionSuccessful();
         } finally { db.endTransaction(); }
+    }
+    /**
+     * Idempotent, transactional WhatsApp import. The remote owner and bearer are resolved by
+     * the Worker; locally only validated entries are stored and duplicate IDs are ignored.
+     */
+    int importWhatsApp(JSONArray rows) throws JSONException {
+        if (rows.length() > 200) throw new IllegalArgumentException("Lote de sincronização inválido");
+        SQLiteDatabase db = getWritableDatabase();
+        int imported = 0;
+        db.beginTransaction();
+        try {
+            for (int i=0;i<rows.length();i++) {
+                JSONObject row = rows.getJSONObject(i);
+                String remoteId = checked(row.getString("remoteId"), "Identificador");
+                if (!remoteId.matches("[0-9a-fA-F-]{36}")) throw new IllegalArgumentException("Identificador remoto inválido");
+                String kind = row.getString("kind");
+                if (!"income".equals(kind) && !"expense".equals(kind)) throw new IllegalArgumentException("Tipo remoto inválido");
+                long cents=row.getLong("cents");requireMoney(cents);
+                String title=checked(row.getString("title"),"Descrição");
+                String category=checked(row.getString("category"),"Categoria");
+                String date=row.getString("date");requireDay(date);
+                ContentValues values=new ContentValues();
+                values.put("remote_id",remoteId);values.put("kind",kind);values.put("cents",cents);
+                values.put("title",title);values.put("category",category);values.put("occurred_on",date);
+                values.put("source","whatsapp");
+                if (db.insertWithOnConflict("entries",null,values,SQLiteDatabase.CONFLICT_IGNORE)!=-1) imported++;
+            }
+            db.setTransactionSuccessful();
+        }finally {db.endTransaction();}
+        return imported;
     }
     String exportCsv() {
         // A single portable CSV includes every part of the budget, not just variable expenses.

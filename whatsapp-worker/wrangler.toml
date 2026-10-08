@@ -1,0 +1,15 @@
+name = "bolsoplus-whatsapp"
+main = "src/index.mjs"
+compatibility_date = "2026-08-01"
+
+[vars]
+GRAPH_API_VERSION = "v24.0"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "bolsoplus_whatsapp"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_UUID"
+migrations_dir = "migrations"
+
+[triggers]
+crons = ["*/5 * * * *"]

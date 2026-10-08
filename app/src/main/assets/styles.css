@@ -13,3 +13,20 @@
 .reset-link svg{width:18px;height:18px}
 .list-row .row-options{min-width:30px;min-height:35px;display:grid;place-items:center}
 @media(max-width:380px){.onboarding{padding:16px 13px}.start-actions button{min-width:100%}}
+
+/* Premium native WhatsApp onboarding; responsive and accessible on 320px screens. */
+.bottom-nav .nav-item{width:25%}
+.wa-card{border-radius:23px;background:linear-gradient(145deg,#14382e,#102637 68%);border:1px solid #386d61;padding:21px 17px 18px;margin:12px 0 19px}
+.wa-card-head{display:flex;gap:12px;align-items:center;margin-bottom:22px}
+.wa-icon{width:46px;height:46px;border-radius:15px;background:#205a46;color:#93f0bb;display:grid;place-items:center;flex-shrink:0}
+.wa-icon svg{width:25px;height:25px}.wa-card-head>div{flex:1;min-width:0}
+.wa-card-head strong{display:block;font-size:13px}.wa-card-head small{display:block;color:#9fbeb6;font-size:11px;margin-top:6px}
+.wa-status-dot{height:10px;width:10px;border-radius:50%;background:#9b7777;box-shadow:0 0 0 3px #9b777722}
+.wa-status-dot.connected{background:#61e4a3;box-shadow:0 0 0 3px #61e4a344}
+.wa-code-box{margin:17px 0;padding:18px 12px;text-align:center;border:1px dashed #7fe3b9;background:#153d3d;border-radius:15px}
+.wa-code-box small{display:block;color:#b2d8ca;font-size:10px;letter-spacing:1px}.wa-code-box strong{display:block;user-select:text;-webkit-user-select:text;word-break:break-word;letter-spacing:1.5px;font-size:20px;margin-top:11px;color:#9ffad0}
+.wa-code-box p{font-size:11px;color:#bad6ca;line-height:1.7;margin-top:13px}
+.wa-actions{display:flex;gap:9px;margin-top:13px}.wa-action{flex:1;padding:13px 7px;background:#244953;color:#d9fff1;border:1px solid #396763;border-radius:12px;font-size:12px;font-weight:770}
+.wa-action:disabled{opacity:.35}.wa-card .reset-link{margin-top:8px}.wa-info{padding:18px;border:1px solid #254658;border-radius:19px;background:#132938;margin-bottom:24px}
+.wa-info p{margin:12px 0;color:#b5ccd2;font-size:12px;line-height:1.7}.wa-info .wa-warning{color:#e2c7a0;font-size:11px;margin-top:20px}
+@media(max-width:360px){.wa-card{padding:17px 12px}.wa-actions{flex-direction:column}.wa-code-box strong{font-size:17px}.bottom-nav{padding-left:10px;padding-right:10px}}

@@ -1,0 +1,7 @@
+{
+  "name":"bolsoplus-whatsapp-cloud-api",
+  "private":true,
+  "type":"module",
+  "scripts":{"test":"node --test test/*.test.mjs","check":"node --check src/index.mjs && node --check src/finance.mjs"},
+  "devDependencies":{"wrangler":"^4.0.0"}
+}

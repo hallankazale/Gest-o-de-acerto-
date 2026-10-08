@@ -43,3 +43,8 @@ node --check app/src/main/assets/logic.js
 ```
 
 Faça testes manuais no celular: abertura sem nenhum dado, renda zero, lançamento por voz e texto (incluindo valores por extenso), edição, exclusão, conta recorrente, mês seguinte, CSV e reset com confirmação. Verifique uso offline: a classificação funciona, mas o serviço de voz Android pode exigir conectividade ou pacote local de idioma.
+
+
+## WhatsApp Business Cloud API (v1.2.0)
+
+Nova aba **WhatsApp** no Android com vínculo de código temporário e importação segura de gastos após confirmação `SIM`. O backend fica em `whatsapp-worker/` e tem instruções de Cloudflare/Meta, esquema D1 e testes de segurança no próprio diretório. A API não inicia sozinha: configure Meta + Cloudflare + segredos para usá-la. Sem servidor ativo, o aplicativo continua funcionando offline.

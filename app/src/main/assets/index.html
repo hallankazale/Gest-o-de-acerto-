@@ -25,6 +25,7 @@
 <symbol id="list" viewBox="0 0 24 24"><path d="M9 6h12M9 12h12M9 18h12M4 6h1M4 12h1M4 18h1"/></symbol>
 <symbol id="calendar" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 2v6m10-6v6M3 11h18"/></symbol>
 <symbol id="wallet" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="15" rx="3"/><path d="M3 10h18M7 6V3h11"/></symbol>
+<symbol id="chat" viewBox="0 0 24 24"><path d="M21 11.5a8.4 8.4 0 0 1-12.5 7.4L3 21l2.1-5.5A8.5 8.5 0 1 1 21 11.5Z"/><path d="M8 11h8m-8 3h5"/></symbol>
 <symbol id="download" viewBox="0 0 24 24"><path d="M12 3v13m-5-5 5 5 5-5M4 20h16"/></symbol>
 </svg>
 
@@ -60,7 +61,20 @@
   <section id="billsPage" class="page" aria-label="Contas fixas"><div class="page-top"><span class="eyebrow">ORÇAMENTO PLANEJADO</span><h1>Contas fixas<span class="mint">.</span></h1><p>Organize seus compromissos sem complicação.</p></div><div class="income-setting"><div class="income-icon"><svg><use href="#wallet"/></svg></div><div><small>RENDA MENSAL BASE</small><strong id="incomeSetting">Não cadastrada</strong></div><button id="changeIncome" class="small-edit" aria-label="Alterar renda"><svg><use href="#edit"/></svg></button></div><div class="section-header spaced"><div><span class="eyebrow">DESPESAS RECORRENTES</span><h2>Seus compromissos</h2></div><button class="text-button" id="newBill"><svg><use href="#plus"/></svg> Adicionar</button></div><div class="list-card" id="billsList"></div><p class="footnote">As contas recorrentes entram automaticamente nos meses definidos por você. Nenhum valor é pré-cadastrado.</p>
     <section class="privacy-tools"><span class="eyebrow">PRIVACIDADE E CONTROLE</span><p>Se precisar recomeçar, você pode excluir os lançamentos, as contas e a renda deste aparelho.</p><button id="resetButton" class="reset-link" type="button"><svg><use href="#trash"/></svg> Apagar todos os meus dados</button></section></section>
 
-  <nav class="bottom-nav" aria-label="Navegação principal"><button class="nav-item selected" data-page="dashboard"><svg><use href="#chart"/></svg><span>Resumo</span></button><button class="nav-item" data-page="entriesPage"><svg><use href="#list"/></svg><span>Histórico</span></button><button class="nav-item" data-page="billsPage"><svg><use href="#wallet"/></svg><span>Contas</span></button></nav>
+  <section id="whatsappPage" class="page" aria-label="Integração oficial WhatsApp">
+    <div class="page-top"><span class="eyebrow">ASSISTENTE VIA WHATSAPP</span><h1>Converse<span class="mint">.</span></h1><p>Envie suas despesas por texto ou áudio, confirme por mensagem e sincronize com o Bolso+.</p></div>
+    <div class="wa-card">
+      <div class="wa-card-head"><span class="wa-icon"><svg><use href="#chat"/></svg></span><div><strong>WhatsApp Business Cloud API</strong><small id="waStatusText">Não conectado</small></div><span id="waStatusDot" class="wa-status-dot"></span></div>
+      <div id="waSetup"><label class="field"><span>URL DO SEU SERVIDOR CLOUDFLARE</span><input type="url" id="waEndpoint" placeholder="https://bolsoplus.conta.workers.dev" autocapitalize="off" autocomplete="off" spellcheck="false"/></label>
+      <button class="primary-button" id="waPairButton" type="button"><svg><use href="#chat"/></svg> Gerar código de vínculo</button></div>
+      <div id="waCodeBox" class="wa-code-box" hidden><small>CÓDIGO VÁLIDO POR 10 MINUTOS</small><strong id="waCodeText"></strong><p>Envie a mensagem acima para o número da API oficial do WhatsApp configurado na Meta.</p></div>
+      <div class="wa-actions"><button class="wa-action" id="waVerifyButton" type="button">Verificar conexão</button><button class="wa-action" id="waSyncButton" type="button">Sincronizar agora</button></div>
+      <button id="waUnlinkButton" class="reset-link" type="button">Desvincular este aparelho</button>
+    </div>
+    <section class="wa-info"><span class="eyebrow">COMO FUNCIONA</span><p>1. Publique o servidor Cloudflare e configure a API oficial da Meta.</p><p>2. Gere seu código aqui e envie <strong>VINCULAR CÓDIGO</strong> por WhatsApp.</p><p>3. Mande “gastei 50 reais de mercado” ou envie áudio. Confira e responda SIM.</p><p>4. Toque em Sincronizar agora: os lançamentos entram no histórico do celular sem duplicar.</p><p class="wa-warning">A sincronização importa lançamentos do WhatsApp para este celular. Não envia renda fixa, contas ou histórico local para o WhatsApp. O resumo no chat mostra apenas o que foi registrado por lá. A Meta e a transcrição podem cobrar pelo uso.</p></section>
+  </section>
+
+  <nav class="bottom-nav" aria-label="Navegação principal"><button class="nav-item selected" data-page="dashboard"><svg><use href="#chart"/></svg><span>Resumo</span></button><button class="nav-item" data-page="entriesPage"><svg><use href="#list"/></svg><span>Histórico</span></button><button class="nav-item" data-page="billsPage"><svg><use href="#wallet"/></svg><span>Contas</span></button><button class="nav-item" data-page="whatsappPage"><svg><use href="#chat"/></svg><span>WhatsApp</span></button></nav>
 </main>
 
 <div class="overlay" id="overlay" aria-hidden="true"><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle"><div class="sheet-grabber"></div><div class="sheet-head"><div><span class="eyebrow" id="sheetEyebrow">CONFIRME OS DETALHES</span><h2 id="sheetTitle">Novo lançamento</h2></div><button class="close-button" id="closeSheet" aria-label="Fechar"><svg><use href="#close"/></svg></button></div><div id="sheetContent"></div></div></div>

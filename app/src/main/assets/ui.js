@@ -81,7 +81,7 @@
       return;
     }
     $('entriesList').innerHTML = snapshot.entries.map(entry => `<div class="list-row">
-      <div class="category-icon">${categoryEmoji(entry.category)}</div><div class="list-info"><strong>${safe(entry.title)}</strong><small>${safe(entry.category)} · ${safe(entry.date.split('-').reverse().join('/'))} ${entry.source === 'voice' ? '· 🎙 Voz' : ''}</small></div>
+      <div class="category-icon">${categoryEmoji(entry.category)}</div><div class="list-info"><strong>${safe(entry.title)}</strong><small>${safe(entry.category)} · ${safe(entry.date.split('-').reverse().join('/'))} ${entry.source === 'voice' ? '· 🎙 Voz' : (entry.source === 'whatsapp' ? '· WhatsApp' : '')}</small></div>
       <div class="list-amount ${entry.kind}">${entry.kind === 'income' ? '+' : '−'}${safe(currency(entry.cents))}</div>
       <button class="row-options" aria-label="Editar lançamento ${safe(entry.title)}" data-edit-entry="${entry.id}">${icon('edit')}</button>
       <button class="row-options" aria-label="Excluir lançamento ${safe(entry.title)}" data-del-entry="${entry.id}">${icon('trash')}</button></div>`).join('');
@@ -169,8 +169,27 @@
       toast('A exportação CSV está disponível no aplicativo Android.');
     }
   }
+  function waState(result) {
+    if (!result || typeof result !== 'object') return;
+    const linked = result.linked === true;
+    $('waStatusText').textContent = linked ? 'Conectado com segurança' : 'Não conectado';
+    $('waStatusDot').classList.toggle('connected', linked);
+    $('waCodeBox').hidden = !result.code;
+    if (result.command) $('waCodeText').textContent = result.command;
+    $('waSyncButton').disabled = !linked;
+    $('waUnlinkButton').hidden = !linked;
+    if (linked && result.imported !== undefined) {
+      toast(`${result.imported} lançamento(s) sincronizado(s).`);
+      if (result.more) toast('Importação parcial: repita a sincronização.');
+    }
+    if (!linked && result.configured === false) $('waCodeBox').hidden = true;
+  }
+  function waAvailable() {
+    if (!native) { showError('Conecte usando o APK Android. A prévia não acessa o servidor.'); return false; }
+    return true;
+  }
   function back() { if ($('overlay').classList.contains('open')) closeSheet(); else if (page !== 'dashboard') showPage('dashboard'); else toast('Você está no resumo financeiro'); }
-  window.Bolso = { renderData, receiveSpeech: result => { $('smartInput').value = result; interpret(result,'voice'); }, showError, toast, back };
+  window.Bolso = { renderData, waState, receiveSpeech: result => { $('smartInput').value = result; interpret(result,'voice'); }, showError, toast, back };
   $('prevMonth').addEventListener('click',()=>changeMonth(-1));
   $('nextMonth').addEventListener('click',()=>changeMonth(1));
   for (const btn of document.querySelectorAll('[data-step]')) btn.addEventListener('click',()=>changeMonth(Number(btn.dataset.step)));
@@ -184,12 +203,20 @@
   $('quickIncome').addEventListener('click',incomeSheet);
   $('quickBill').addEventListener('click',()=>billSheet(null));
   $('resetButton').addEventListener('click',resetSheet);
+  $('waPairButton').addEventListener('click', () => {
+    if (waAvailable()) window.BolsoNative.waStart($('waEndpoint').value.trim());
+  });
+  $('waVerifyButton').addEventListener('click', () => { if (waAvailable()) window.BolsoNative.waStatus(); });
+  $('waSyncButton').addEventListener('click', () => { if (waAvailable()) window.BolsoNative.waSync(); });
+  $('waUnlinkButton').addEventListener('click', () => {
+    if (waAvailable() && confirm('Desvincular este aparelho? Os lançamentos que já estão no celular serão mantidos.')) window.BolsoNative.waUnlink();
+  });
   $('newBill').addEventListener('click',()=>billSheet(null));
   $('exportButton').addEventListener('click',exportCsv);
   $('closeSheet').addEventListener('click',closeSheet);
   $('overlay').addEventListener('click',e=>{if(e.target===$('overlay'))closeSheet();});
   document.addEventListener('keydown',e=>{if(e.key==='Escape')back();});
-  document.querySelectorAll('.nav-item').forEach(el=>el.addEventListener('click',()=>showPage(el.dataset.page)));
+  document.querySelectorAll('.nav-item').forEach(el=>el.addEventListener('click',()=>{showPage(el.dataset.page);if(el.dataset.page==='whatsappPage'&&native)window.BolsoNative.waStatus();}));
   $('entriesList').addEventListener('click',e=>{
     if (e.target.closest('#emptyNewEntry')) {pendingSource='text';entrySheet(null);return;}
     const edit = e.target.closest('[data-edit-entry]');
