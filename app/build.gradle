@@ -1,0 +1,27 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'br.com.hallankazale.bolsoplus'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'br.com.hallankazale.bolsoplus'
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName '1.0.0'
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            // Use a separate release signing key when publishing.
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
