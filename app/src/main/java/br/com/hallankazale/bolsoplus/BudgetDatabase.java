@@ -18,12 +18,12 @@ final class BudgetDatabase extends SQLiteOpenHelper {
     private static final Pattern MONTH = Pattern.compile("\\d{4}-(0[1-9]|1[0-2])");
     private static final Pattern DAY = Pattern.compile("\\d{4}-(0[1-9]|1[0-2])-([0-2]\\d|3[01])");
 
-    BudgetDatabase(Context context) { super(context, DB_NAME, null, 3); }
+    BudgetDatabase(Context context) { super(context, DB_NAME, null, 4); }
 
     @Override public void onCreate(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE settings (name TEXT PRIMARY KEY, value TEXT NOT NULL)");
         db.execSQL("CREATE TABLE recurring (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, category TEXT NOT NULL, cents INTEGER NOT NULL CHECK(cents > 0), from_month TEXT, until_month TEXT)");
-        db.execSQL("CREATE TABLE entries (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL CHECK(kind IN ('expense','income')), cents INTEGER NOT NULL CHECK(cents > 0), title TEXT NOT NULL, category TEXT NOT NULL, occurred_on TEXT NOT NULL, source TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, remote_id TEXT)");
+        db.execSQL("CREATE TABLE entries (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL CHECK(kind IN ('expense','income')), cents INTEGER NOT NULL CHECK(cents > 0), title TEXT NOT NULL, category TEXT NOT NULL, occurred_on TEXT NOT NULL, source TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, remote_id TEXT, status TEXT NOT NULL DEFAULT 'settled' CHECK(status IN ('settled','pending')))");
         db.execSQL("CREATE UNIQUE INDEX ux_entries_remote_id ON entries(remote_id)");
         // Start with no personal data. Never inject example debts or income in production.
         ContentValues setting = new ContentValues(); setting.put("name", "income_cents"); setting.put("value", "0");
@@ -36,6 +36,7 @@ final class BudgetDatabase extends SQLiteOpenHelper {
             db.execSQL("ALTER TABLE entries ADD COLUMN remote_id TEXT");
             db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS ux_entries_remote_id ON entries(remote_id)");
         }
+        if (oldVersion < 4) db.execSQL("ALTER TABLE entries ADD COLUMN status TEXT NOT NULL DEFAULT 'settled' CHECK(status IN ('settled','pending'))");
     }
 
     private static void requireMoney(long cents) {
@@ -72,22 +73,26 @@ final class BudgetDatabase extends SQLiteOpenHelper {
         }
         out.put("recurring", bills);
         JSONArray entries = new JSONArray();
-        try (Cursor c = db.rawQuery("SELECT id,kind,cents,title,category,occurred_on,source FROM entries WHERE occurred_on >= ? AND occurred_on < ? ORDER BY occurred_on DESC,id DESC",
+        try (Cursor c = db.rawQuery("SELECT id,kind,cents,title,category,occurred_on,source,status FROM entries WHERE occurred_on >= ? AND occurred_on < ? ORDER BY occurred_on DESC,id DESC",
                 new String[]{month + "-01", java.time.YearMonth.parse(month).plusMonths(1).toString() + "-01"})) {
             while (c.moveToNext()) {
                 JSONObject item = new JSONObject();
-                item.put("id", c.getLong(0)); item.put("kind", c.getString(1)); item.put("cents", c.getLong(2)); item.put("title", c.getString(3)); item.put("category", c.getString(4)); item.put("date", c.getString(5)); item.put("source", c.getString(6)); entries.put(item);
+                item.put("id", c.getLong(0)); item.put("kind", c.getString(1)); item.put("cents", c.getLong(2)); item.put("title", c.getString(3)); item.put("category", c.getString(4)); item.put("date", c.getString(5)); item.put("source", c.getString(6)); item.put("status",c.getString(7)); entries.put(item);
             }
         }
         out.put("entries", entries);
         return out;
     }
-    void saveEntry(String kind, long cents, String title, String category, String day, String source) {
+    private static String checkedStatus(String status) {
+        if (!"settled".equals(status) && !"pending".equals(status)) throw new IllegalArgumentException("Situação inválida");
+        return status;
+    }
+    void saveEntry(String kind, long cents, String title, String category, String day, String source, String status) {
         if (!"income".equals(kind) && !"expense".equals(kind)) throw new IllegalArgumentException("Tipo inválido");
         requireMoney(cents); requireDay(day);
         ContentValues values = new ContentValues(); values.put("kind", kind); values.put("cents", cents);
         values.put("title", checked(title,"Descrição")); values.put("category", checked(category,"Categoria"));
-        values.put("occurred_on", day); values.put("source", "voice".equals(source) ? "voice" : "text");
+        values.put("occurred_on", day); values.put("source", "voice".equals(source) ? "voice" : "text"); values.put("status",checkedStatus(status));
         getWritableDatabase().insertOrThrow("entries", null, values);
     }
     /** Save one spoken batch as a single transaction. No partial inserts after validation failure. */
@@ -110,19 +115,20 @@ final class BudgetDatabase extends SQLiteOpenHelper {
                 values.put("kind",kind);values.put("cents",cents);values.put("title",checked(item.getString("title"),"Descrição"));
                 values.put("category",checked(item.getString("category"),"Categoria"));
                 values.put("occurred_on",day);values.put("source","voice".equals(source)?"voice":"text");
+                values.put("status",checkedStatus(item.getString("status")));
                 db.insertOrThrow("entries",null,values);
             }
             db.setTransactionSuccessful();
         } catch (JSONException e) {throw new IllegalArgumentException("Lançamento inválido");}
         finally {db.endTransaction();}
     }
-    void updateEntry(long id, String kind, long cents, String title, String category, String day) {
+    void updateEntry(long id, String kind, long cents, String title, String category, String day, String status) {
         if (id < 1) throw new IllegalArgumentException("ID inválido");
         if (!"income".equals(kind) && !"expense".equals(kind)) throw new IllegalArgumentException("Tipo inválido");
         requireMoney(cents); requireDay(day);
         ContentValues values = new ContentValues(); values.put("kind", kind); values.put("cents", cents);
         values.put("title", checked(title,"Descrição")); values.put("category", checked(category,"Categoria"));
-        values.put("occurred_on", day);
+        values.put("occurred_on", day); values.put("status",checkedStatus(status));
         if (getWritableDatabase().update("entries", values, "id=?", new String[]{Long.toString(id)}) != 1)
             throw new IllegalArgumentException("Lançamento não encontrado");
     }
@@ -188,7 +194,7 @@ final class BudgetDatabase extends SQLiteOpenHelper {
                 ContentValues values=new ContentValues();
                 values.put("remote_id",remoteId);values.put("kind",kind);values.put("cents",cents);
                 values.put("title",title);values.put("category",category);values.put("occurred_on",date);
-                values.put("source","whatsapp");
+                values.put("source","whatsapp");values.put("status",checkedStatus(row.optString("status","settled")));
                 if (db.insertWithOnConflict("entries",null,values,SQLiteDatabase.CONFLICT_IGNORE)!=-1) imported++;
             }
             db.setTransactionSuccessful();
@@ -204,8 +210,8 @@ final class BudgetDatabase extends SQLiteOpenHelper {
         try (Cursor c = getReadableDatabase().rawQuery("SELECT title,category,cents,from_month,until_month FROM recurring ORDER BY id", null)) {
             while (c.moveToNext()) appendCsv(sb, "conta_fixa", c.getLong(2), "", c.getString(1), c.getString(0), "recorrente", c.getString(3), c.isNull(4) ? "" : c.getString(4));
         }
-        try (Cursor c = getReadableDatabase().rawQuery("SELECT kind,cents,occurred_on,category,title,source FROM entries ORDER BY occurred_on DESC,id DESC",null)) {
-            while (c.moveToNext()) appendCsv(sb, c.getString(0), c.getLong(1), c.getString(2), c.getString(3), c.getString(4), c.getString(5), "", "");
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT kind,cents,occurred_on,category,title,source,status FROM entries ORDER BY occurred_on DESC,id DESC",null)) {
+            while (c.moveToNext()) appendCsv(sb, c.getString(0), c.getLong(1), c.getString(2), c.getString(3), c.getString(4), c.getString(5)+":"+c.getString(6), "", "");
         }
         return sb.toString();
     }

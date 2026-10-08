@@ -72,8 +72,8 @@ function amounts(text){
  }
  return spans.sort((a,b)=>a.start-b.start);
 }
-const transition=/\s+e\s+(?=(?:recebi|ganhei|gastei|paguei|comprei|entrou|salario|vendi)\b)/;
-function firstClause(s){const first=s.split(transition)[0].split(/\s+(?=(?:recebi|ganhei|gastei|paguei|comprei|entrou|depositaram)\b)/)[0].split(/[,;.!?\n]/)[0].trim();return /^(?:e|de|da|do)$/.test(first)?'':first;}
+const transition=/\s+e\s+(?=(?:recebi|ganhei|gastei|paguei|comprei|entrou|salario|vendi|tenho|preciso|falta|vou|devo|a\s+pagar|a\s+receber|vence|vencera|ainda)\b)/;
+function firstClause(s){const first=s.split(transition)[0].split(/\s+(?=(?:recebi|ganhei|gastei|paguei|comprei|entrou|depositaram|tenho|preciso|falta|vou|devo|vence|vencera|ainda)\b)/)[0].split(/[,;.!?\n]/)[0].trim();return /^(?:e|de|da|do)$/.test(first)?'':first;}
 function lastClause(s){return s.split(/[,;.!?\n]/).at(-1).split(transition).at(-1).trim();}
 function category(s){
  const t=normalize(s);
@@ -83,11 +83,41 @@ function category(s){
 function label(s,kind){
  const n=normalize(s);
  for(const [term,name,cat] of quickLabels){if(new RegExp('\\b'+term+'\\b').test(n)&&(kind==='income'||cat!=='Entradas'))return {title:name,category:kind==='income'?'Entradas':cat};}
- const cleaned=s.replace(/\b(recebi|ganhei|gastei|paguei|comprei|entrou|salario|vendi|reais|real|r\$|de|do|da|para|em|na|no|pelo|pela|e|ontem|hoje|foi|conta|um|uma)\b/g,' ').replace(/\s+/g,' ').trim();
+ const cleaned=s.replace(/\b(recebi|ganhei|gastei|paguei|comprei|entrou|salario|vendi|tenho|preciso|pagar|receber|falta|devo|vou|vai|vence|vencera|pago|pendente|reais|real|r\$|de|do|da|para|em|na|no|pelo|pela|e|ontem|hoje|foi|conta|um|uma)\b/g,' ').replace(/\s+/g,' ').trim();
  return {title:(cleaned|| (kind==='income'?'Entrada extra':'Gasto registrado')).slice(0,160),category:kind==='income'?'Entradas':category(s)};
 }
-function kindOf(s){return /\b(recebi|recebimento|ganhei|depositaram|entrou|salario|vendi|venda|pix recebido)\b/.test(s)?'income':'expense';}
-function dateOf(s,today){let date=today||todayBrazil();if(/\bontem\b/.test(s)){const d=new Date(date+'T12:00:00Z');d.setUTCDate(d.getUTCDate()-1);date=d.toISOString().slice(0,10);}return date;}
+/**
+ * Separate direction (income/expense) from settlement (settled/pending).
+ * Explicit financial verbs outrank nouns like "salário". When time is unspecified,
+ * treat expenses and expected salary conservatively as pending instead of inventing
+ * that money has moved. A preceding verb may govern a comma-delimited series.
+ */
+const actions = [
+  {re:/\b(?:tenho\s+(?:que|de)\s+receber|preciso\s+receber|vou\s+receber|ainda\s+(?:vou\s+)?receber|falta\s+receber|a\s+receber|irei\s+receber|receberei|vai\s+cair|deve\s+entrar)\b/g,kind:'income',status:'pending'},
+  {re:/\b(?:tenho\s+(?:que|de)\s+pagar|preciso\s+pagar|vou\s+pagar|ainda\s+(?:vou\s+)?pagar|falta\s+pagar|a\s+pagar|irei\s+pagar|pagarei|devo\s+pagar|tenho\s+uma?\s+conta\s+de|vence|vencera|esta\s+pendente)\b/g,kind:'expense',status:'pending'},
+  {re:/\b(?:ja\s+recebi|recebi|ganhei|depositaram|entrou|caiu|vendi|pix\s+recebido|foi\s+creditado)\b/g,kind:'income',status:'settled'},
+  {re:/\b(?:ja\s+paguei|paguei|gastei|comprei|quite[ie]|foi\s+pago|debitaram|descontaram|saiu\s+da\s+conta)\b/g,kind:'expense',status:'settled'}
+];
+function detectAction(segment){
+ let chosen=null;
+ for(const action of actions){action.re.lastIndex=0;let found;while((found=action.re.exec(segment))!==null){if(!chosen || found.index>=chosen.index)chosen={index:found.index,kind:action.kind,status:action.status};}}
+ return chosen;
+}
+function resolveMovement(prefix,picked,previous){
+ // Locate the last explicit action BEFORE this amount, or use prior series action.
+ const action=detectAction(prefix);
+ if(action)return {kind:action.kind,status:action.status};
+ if(/\b(?:salario|renda|recebimento)\b/.test(prefix))return {kind:'income',status:'pending'};
+ const linked=detectAction(picked);
+ if(linked)return {kind:linked.kind,status:linked.status};
+ if(/\b(?:salario|recebimento|renda|pagamento\s+recebido)\b/.test(picked))return {kind:'income',status:'pending'};
+ if(previous){
+  if(previous.kind==='income' && category(picked)!=='Outros')return {kind:'expense',status:'pending'};
+  return {...previous};
+ }
+ return {kind:'expense',status:'pending'};
+}
+function dateOf(s,today){let date=today||todayBrazil();if(/\bontem\b/.test(s)){const d=new Date(date+'T12:00:00Z');d.setUTCDate(d.getUTCDate()-1);date=d.toISOString().slice(0,10);}else if(/\bamanha\b/.test(s)){const d=new Date(date+'T12:00:00Z');d.setUTCDate(d.getUTCDate()+1);date=d.toISOString().slice(0,10);}return date;}
 /**
  * Returns {items, error:null} or {items:[],error}.
  * Limit 12 items/utterance to control WhatsApp reply size, mishearings and spend.
@@ -107,23 +137,28 @@ function interpretFinanceBatch(message,today){
   const right=firstClause(rawRight);
   const leftTag=category(left),rightTag=category(right);
   const rightIsLinked=/^(?:de|da|do|para|na|no|em)\b/.test(right);
-  const leftIsIncome=kindOf(left)==='income', rightIsIncome=kindOf(right)==='income';
+  const actionPrefix=lastClause(text.slice(prev?.end??0,current.start));
+  const movement=resolveMovement(actionPrefix,category(actionPrefix)!=='Outros'?actionPrefix:right,items.at(-1)?{kind:items.at(-1).kind,status:items.at(-1).status}:null);
+  const leftIsIncome=movement.kind==='income';
   const previousChosen=items[i-1];
   const leftLooksPrev=previousChosen&&leftTag!=='Outros'&&leftTag===previousChosen.category&&lastClause(text.slice(found[i-1].end,current.start))===previousChosen._picked;
   let picked;
-  if(leftIsIncome&&/\b(salario|pagamento|venda)\b/.test(right))picked=right;
+  if(/\b(?:salario|renda)\b/.test(left)&&!detectAction(left))picked=left;
+  else if(leftIsIncome&&/\b(salario|pagamento|venda)\b/.test(right))picked=right;
   else if(rightIsLinked&&right.length>2)picked=right;
   else if(leftLooksPrev&&right)picked=right;
   else if(left&&leftTag!=='Outros')picked=left;
   else if(right)picked=right;
   else picked=left;
   // If the last verb before the money is income, do not inherit the previous expense.
-  const kind=leftIsIncome?'income':kindOf(picked)==='income'?'income':'expense';
+  // New explicit action after the previous amount must override inherited direction.
+  const kind=movement.kind;
+  const status=movement.status;
   if(!picked||/^\s*(?:de|da|do|e)\s*$/.test(picked))return {items:[],error:`Encontrei ${found.length} valores, mas faltou a descrição de um deles. Informe nome e valor de cada conta.`};
   // Prevent implicit allocation of one price to multiple named bills.
   if(found.length===1&&/\b(?:agua|luz|internet|aluguel)\b.*\be\s+(?:agua|luz|internet|aluguel)\b/.test(picked))return {items:[],error:'Você citou mais de uma conta com um único valor. Diga o preço de cada uma separadamente.'};
   const meta=label(picked,kind);
-  items.push({kind,cents:current.cents,category:meta.category,title:meta.title,date:dateOf(left+' '+right,today),_picked:picked});
+  items.push({kind,status,cents:current.cents,category:meta.category,title:meta.title,date:dateOf(left+' '+right,today),_picked:picked});
  }
  return {items:items.map(({_picked,...item})=>item),error:null};
 }

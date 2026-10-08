@@ -73,4 +73,22 @@ test('não associa um valor único a duas contas distintas', () => {
   const context={window:{},Intl,Date};vm.runInNewContext(fs.readFileSync(require('node:path').join(__dirname,'../app/src/main/assets/multi.js'),'utf8'),context);
   assert.ok(context.window.BolsoBatch.interpretFinanceBatch('100 de água e luz','2026-10-08').error);
 });
+test('contas a receber não entram na disponibilidade até serem recebidas',()=>{
+ const base={month:'2026-10',incomeCents:200000,recurring:[],entries:[
+  {kind:'income',status:'pending',cents:90000},
+  {kind:'expense',status:'pending',cents:30000},
+  {kind:'expense',status:'settled',cents:20000}
+ ]};
+ const first=monthlySummary(base);
+ assert.equal(first.pendingIncome,90000);assert.equal(first.pendingExpense,30000);
+ assert.equal(first.incomeCents,200000);assert.equal(first.remainingCents,150000);
+ base.entries[0].status='settled';
+ assert.equal(monthlySummary(base).remainingCents,240000);
+});
+test('parser do Android distingue pago, a pagar, recebido e a receber',()=>{
+ const fs=require('node:fs');const vm=require('node:vm');const context={window:{},Intl,Date};
+ const src=fs.readFileSync(require('node:path').join(__dirname,'../app/src/main/assets/multi.js'),'utf8');vm.runInNewContext(src,context);
+ const b=context.window.BolsoBatch.interpretFinanceBatch('paguei 100 de água, tenho que pagar 100 de luz, recebi 3900 de salário e vou receber 200 de serviço','2026-10-08');
+ assert.equal(b.error,null);assert.deepEqual(Array.from(b.items.map(v=>v.status)),['settled','pending','settled','pending']);
+});
 console.log(`\n${tested} testes passaram`);

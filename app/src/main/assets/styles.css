@@ -36,3 +36,10 @@
 .batch-header{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:10px;color:#e7f7f2}
 .batch-header span{color:#8ce2bd;font-weight:700}
 .batch-totals{margin:10px 0;color:#dcf4e9;font-size:.86rem;line-height:1.5}
+
+/* Payment-state cards scale to small Android screens without adding another tab. */
+.settlement-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:16px 0 5px}
+.settlement-card{background:#102f43;border:1px solid #24485b;border-radius:14px;padding:12px 8px;min-width:0}
+.settlement-card small{display:block;font-size:10px;letter-spacing:.2px;line-height:1.4;color:#a9c4d0;margin-bottom:7px}
+.settlement-card strong{display:block;font-size:13px;font-weight:800;color:#f2fbff;overflow-wrap:anywhere}
+@media(max-width:345px){.settlement-summary{grid-template-columns:1fr}.settlement-card{padding:10px 14px}.settlement-card strong{font-size:16px}}

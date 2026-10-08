@@ -69,6 +69,9 @@
     $('ratioFill').style.width = `${percent}%`;
     $('donutPercent').textContent = noIncome ? '—' : `${sum.percent}%`;
     $('donut').style.background = noIncome ? '#284457' : `conic-gradient(#ffca7b 0 ${percent}%, #215849 ${percent}% 100%)`;
+    $('pendingPayable').textContent=currency(sum.pendingExpense);
+    $('pendingReceivable').textContent=currency(sum.pendingIncome);
+    $('settledPaid').textContent=currency(sum.paidExpense);
     $('fixedAmount').textContent = currency(sum.fixedCents);
     $('variableAmount').textContent = currency(sum.expensesCents);
     $('leftAmount').textContent = currency(sum.remainingCents);
@@ -81,8 +84,9 @@
       return;
     }
     $('entriesList').innerHTML = snapshot.entries.map(entry => `<div class="list-row">
-      <div class="category-icon">${categoryEmoji(entry.category)}</div><div class="list-info"><strong>${safe(entry.title)}</strong><small>${safe(entry.category)} · ${safe(entry.date.split('-').reverse().join('/'))} ${entry.source === 'voice' ? '· 🎙 Voz' : (entry.source === 'whatsapp' ? '· WhatsApp' : '')}</small></div>
+      <div class="category-icon">${categoryEmoji(entry.category)}</div><div class="list-info"><strong>${safe(entry.title)}</strong><small>${safe(entry.category)} · ${safe(entry.date.split('-').reverse().join('/'))} · ${entry.status==='pending'?(entry.kind==='income'?'🕒 A receber':'🕒 A pagar'):(entry.kind==='income'?'✅ Recebido':'✅ Pago')} ${entry.source === 'voice' ? '· 🎙 Voz' : (entry.source === 'whatsapp' ? '· WhatsApp' : '')}</small></div>
       <div class="list-amount ${entry.kind}">${entry.kind === 'income' ? '+' : '−'}${safe(currency(entry.cents))}</div>
+      ${entry.status==='pending'?`<button class="row-options" aria-label="Marcar como ${entry.kind==='income'?'recebido':'pago'}" title="Marcar como ${entry.kind==='income'?'recebido':'pago'}" data-settle-entry="${entry.id}">${icon('check')}</button>`:''}
       <button class="row-options" aria-label="Editar lançamento ${safe(entry.title)}" data-edit-entry="${entry.id}">${icon('edit')}</button>
       <button class="row-options" aria-label="Excluir lançamento ${safe(entry.title)}" data-del-entry="${entry.id}">${icon('trash')}</button></div>`).join('');
   }
@@ -101,12 +105,13 @@
   }
   function closeSheet() { $('overlay').classList.remove('open'); $('overlay').setAttribute('aria-hidden','true'); }
   function entrySheet(item, existingId = 0) {
-    const draft = item || {kind:'expense',cents:0,category:'Outros',description:'',date:today()};
+    const draft = item || {kind:'expense',status:'pending',cents:0,category:'Outros',description:'',date:today()};
     const categories = ['Entradas',...Logic.categories.map(c=>c.name)];
     openSheet(existingId ? 'Editar lançamento' : (item ? 'Confirme seu lançamento' : 'Novo lançamento'),
       `${item && !existingId ? `<div class="preview-callout">${icon('check')}Entendi! Confira a categoria e o valor antes de salvar.</div>` : ''}
       <form id="entryForm">
       <label class="field"><span>TIPO</span><select id="formKind"><option value="expense" ${draft.kind === 'expense'?'selected':''}>Despesa</option><option value="income" ${draft.kind === 'income'?'selected':''}>Entrada / recebimento</option></select></label>
+      <label class="field"><span>SITUAÇÃO DO DINHEIRO</span><select id="formStatus"><option value="pending" ${draft.status==='pending'?'selected':''}>Ainda não foi pago / recebido</option><option value="settled" ${draft.status!=='pending'?'selected':''}>Já foi pago / recebido</option></select></label>
       <label class="field"><span>DESCRIÇÃO</span><input id="formDescription" maxlength="160" required placeholder="Ex.: bolachas e salgadinhos" value="${safe(draft.description)}"/></label>
       <div class="field-grid"><label class="field"><span>VALOR (R$)</span><input id="formAmount" type="text" inputmode="decimal" required placeholder="50,00" value="${draft.cents ? safe(formatEdit(draft.cents)) : ''}"/></label>
       <label class="field"><span>DATA</span><input id="formDate" type="date" required value="${safe(draft.date)}"/></label></div>
@@ -116,6 +121,7 @@
     $('entryForm').addEventListener('submit',e => {
       e.preventDefault();
       const kind = $('formKind').value;
+      const status = $('formStatus').value;
       const cents = Logic.parseAmount($('formAmount').value);
       if (!cents) return showError('Informe um valor válido, como 50,00');
       const description = $('formDescription').value.trim();
@@ -123,11 +129,11 @@
       if (!description || description.length > 160 || !Logic.validDay(date)) return showError('Confira a descrição e a data');
       const category = kind === 'income' ? 'Entradas' : $('formCategory').value;
       if (native) {
-        if (existingId) window.BolsoNative.updateEntry(existingId,kind,cents,description,category,date);
-        else window.BolsoNative.saveEntry(kind,cents,description,category,date,pendingSource);
+        if (existingId) window.BolsoNative.updateEntry(existingId,kind,cents,description,category,date,status);
+        else window.BolsoNative.saveEntry(kind,cents,description,category,date,pendingSource,status);
       } else previewUpdate(db => {
-        if (existingId) { const row=db.entries.find(x=>x.id===existingId); if(row) Object.assign(row,{kind,cents,title:description,category,date}); }
-        else db.entries.push({id:Date.now(),kind,cents,title:description,category,date,source:pendingSource});
+        if (existingId) { const row=db.entries.find(x=>x.id===existingId); if(row) Object.assign(row,{kind,cents,title:description,category,date,status}); }
+        else db.entries.push({id:Date.now(),kind,cents,title:description,category,date,status,source:pendingSource});
       });
       closeSheet(); $('smartInput').value = '';
       if (!native) toast(existingId ? 'Lançamento atualizado' : 'Lançamento registrado');
@@ -138,8 +144,9 @@
   function batchSheet(items) {
     const cats = ['Entradas', ...Logic.categories.map(c => c.name)];
     const rows = items.map((item,i) => `<section class="batch-item" data-batch="${i}">
-      <div class="batch-header"><strong>${i+1}. ${item.kind==='income'?'Entrada':'Despesa'}</strong><span>${safe(currency(item.cents))}</span></div>
+      <div class="batch-header"><strong>${i+1}. ${item.status==='pending'?'🕒':'✅'} ${item.kind==='income'?(item.status==='pending'?'A receber':'Recebido'):(item.status==='pending'?'A pagar':'Pago')}</strong><span>${safe(currency(item.cents))}</span></div>
       <div class="field-grid"><label class="field"><span>TIPO</span><select class="batch-kind"><option value="expense" ${item.kind==='expense'?'selected':''}>Despesa</option><option value="income" ${item.kind==='income'?'selected':''}>Entrada</option></select></label><label class="field"><span>VALOR R$</span><input class="batch-amount" required inputmode="decimal" value="${safe(formatEdit(item.cents))}"/></label></div>
+      <label class="field"><span>SITUAÇÃO DO DINHEIRO</span><select class="batch-status"><option value="pending" ${item.status==='pending'?'selected':''}>Pendente</option><option value="settled" ${item.status!=='pending'?'selected':''}>Já pago / recebido</option></select></label>
       <label class="field"><span>DESCRIÇÃO</span><input class="batch-name" required maxlength="160" value="${safe(item.title)}"/></label>
       <div class="field-grid"><label class="field"><span>CATEGORIA</span><select class="batch-category">${cats.map(c=>`<option ${c===item.category?'selected':''}>${safe(c)}</option>`).join('')}</select></label><label class="field"><span>DATA</span><input class="batch-date" type="date" required value="${safe(item.date)}"/></label></div>
     </section>`).join('');
@@ -157,11 +164,12 @@
       for(const row of $('batchForm').querySelectorAll('[data-batch]')) {
         const kind=row.querySelector('.batch-kind').value;
         const cents=Logic.parseAmount(row.querySelector('.batch-amount').value);
+        const status=row.querySelector('.batch-status').value;
         const title=row.querySelector('.batch-name').value.trim();
         const date=row.querySelector('.batch-date').value;
         const category=kind==='income'?'Entradas':row.querySelector('.batch-category').value;
         if(!cents||!title||title.length>160||!Logic.validDay(date))return showError('Confira os valores, datas e descrições antes de salvar');
-        parsed.push({kind,cents,title,category,date});
+        parsed.push({kind,status,cents,title,category,date});
       }
       if(native) window.BolsoNative.saveBatch(JSON.stringify(parsed),pendingSource);
       else previewUpdate(db => {for(const [i,x] of parsed.entries())db.entries.push({id:Date.now()*100+i,...x,source:pendingSource});});
@@ -255,6 +263,15 @@
   document.querySelectorAll('.nav-item').forEach(el=>el.addEventListener('click',()=>{showPage(el.dataset.page);if(el.dataset.page==='whatsappPage'&&native)window.BolsoNative.waStatus();}));
   $('entriesList').addEventListener('click',e=>{
     if (e.target.closest('#emptyNewEntry')) {pendingSource='text';entrySheet(null);return;}
+    const settle=e.target.closest('[data-settle-entry]');
+    if(settle && snapshot){
+      const item=snapshot.entries.find(x=>x.id===Number(settle.dataset.settleEntry));
+      if(item && item.status==='pending' && confirm(`Marcar ${item.title} como ${item.kind==='income'?'recebido':'pago'}?`)){
+        if(native)window.BolsoNative.updateEntry(item.id,item.kind,item.cents,item.title,item.category,item.date,'settled');
+        else previewUpdate(db=>{const record=db.entries.find(x=>x.id===item.id);if(record)record.status='settled';});
+      }
+      return;
+    }
     const edit = e.target.closest('[data-edit-entry]');
     if (edit && snapshot) {
       const item=snapshot.entries.find(x=>x.id===Number(edit.dataset.editEntry));

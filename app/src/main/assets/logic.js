@@ -85,13 +85,16 @@
     const fixed = snapshot.recurring.filter(b => (!b.fromMonth || b.fromMonth <= month) && (!b.untilMonth || b.untilMonth >= month));
     const fixedCents = fixed.reduce((sum, b) => sum + b.cents, 0);
     const expensesCents = snapshot.entries.filter(x => x.kind === 'expense').reduce((s, e) => s + e.cents, 0);
-    const extraIncome = snapshot.entries.filter(x => x.kind === 'income').reduce((s, e) => s + e.cents, 0);
+    const extraIncome = snapshot.entries.filter(x => x.kind === 'income' && x.status !== 'pending').reduce((s, e) => s + e.cents, 0);
+    const pendingIncome = snapshot.entries.filter(x => x.kind === 'income' && x.status === 'pending').reduce((s, e) => s + e.cents, 0);
+    const pendingExpense = snapshot.entries.filter(x => x.kind === 'expense' && x.status === 'pending').reduce((s, e) => s + e.cents, 0);
+    const paidExpense = snapshot.entries.filter(x => x.kind === 'expense' && x.status !== 'pending').reduce((s, e) => s + e.cents, 0);
     const incomeCents = snapshot.incomeCents + extraIncome;
     const spentCents = fixedCents + expensesCents;
     const remainingCents = incomeCents - spentCents;
     // A percentage without a positive income is undefined; never advertise 100% free.
     const percent = incomeCents > 0 ? Math.round(spentCents / incomeCents * 100) : null;
-    return { fixed, fixedCents, expensesCents, extraIncome, incomeCents, spentCents, remainingCents, percent, availablePercent: percent === null ? null : Math.max(0, 100 - percent) };
+    return { fixed, fixedCents, expensesCents, extraIncome, pendingIncome, paidExpense, pendingExpense, incomeCents, spentCents, remainingCents, percent, availablePercent: percent === null ? null : Math.max(0, 100 - percent) };
   }
   function moveMonth(month, offset) {
     if (!monthValid(month)) throw new Error('Mês inválido');

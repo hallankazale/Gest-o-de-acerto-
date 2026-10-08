@@ -20,9 +20,9 @@ class FakeDatabase {
    },
    async all(){
     if(sql.includes('FROM transactions WHERE wa_id=? AND rowid>?')){
-       return {results:db.entries.filter(x=>x.wa_id===args[0]&&x.cursor>args[1]).sort((a,b)=>a.cursor-b.cursor).slice(0,200).map(e=>({cursor:e.cursor,remoteId:e.id,kind:e.kind,cents:e.cents,title:e.title,category:e.category,date:e.occurred_on}))};
+       return {results:db.entries.filter(x=>x.wa_id===args[0]&&x.cursor>args[1]).sort((a,b)=>a.cursor-b.cursor).slice(0,200).map(e=>({cursor:e.cursor,remoteId:e.id,kind:e.kind,cents:e.cents,title:e.title,category:e.category,date:e.occurred_on,status:e.status||'settled'}))};
     }
-    if(sql.includes('COALESCE(SUM(cents),0)'))return {results:[]};
+    if(sql.includes('COALESCE(SUM(cents),0)'))return {results:[...new Map(db.entries.filter(e=>e.wa_id===args[0]).map(e=>[e.kind+'_'+e.status,{kind:e.kind,status:e.status,cents:db.entries.filter(k=>k.kind===e.kind&&k.status===e.status&&k.wa_id===args[0]).reduce((s,k)=>s+k.cents,0)}])).values()]};
     if(sql.includes('FROM transactions WHERE wa_id=? ORDER'))return {results:db.entries.filter(e=>e.wa_id===args[0]).slice(-8).reverse()};
     if(sql.includes('FROM inbox WHERE status='))return {results:[]};
     throw Error('Unmocked all: '+sql);
@@ -41,7 +41,7 @@ class FakeDatabase {
     else if(sql.startsWith('INSERT OR REPLACE INTO pending'))db.pending.set(args[0],{wa_id:args[0],kind:args[1],cents:args[2],title:args[3],category:args[4],occurred_on:args[5],source_message_id:args[6],expires_at:args[7]});
     else if(sql.startsWith('DELETE FROM pending WHERE wa_id=? AND'))db.pending.delete(args[0]);
     else if(sql.startsWith('DELETE FROM pending WHERE wa_id='))db.pending.delete(args[0]);
-    else if(sql.startsWith('INSERT OR IGNORE INTO transactions')){if(db.entries.some(x=>x.source_message_id===args[7]))changes=0;else db.entries.push({cursor:db.nextCursor++,id:args[0],wa_id:args[1],kind:args[2],cents:args[3],title:args[4],category:args[5],occurred_on:args[6],source_message_id:args[7]});}
+    else if(sql.startsWith('INSERT OR IGNORE INTO transactions')){if(db.entries.some(x=>x.source_message_id===args[7]))changes=0;else db.entries.push({cursor:db.nextCursor++,id:args[0],wa_id:args[1],kind:args[2],cents:args[3],title:args[4],category:args[5],occurred_on:args[6],source_message_id:args[7],status:args[8]});}
     else if(sql.startsWith('INSERT OR IGNORE INTO received_events')){if(db.received.has(args[0]))changes=0;else db.received.set(args[0],{sender:args[1]});}
     else if(sql.startsWith('INSERT OR IGNORE INTO inbox')){if(db.inbox.has(args[0]))changes=0;else db.inbox.set(args[0],{id:args[0],sender:args[1],payload_json:args[2],attempts:0,status:'queued',last_attempt:0});}
     else if(sql.startsWith('UPDATE inbox SET status=\'processing\'')){const row=db.inbox.get(args[1]);if(row&&row.attempts<5&&row.status==='queued'){row.status='processing';row.last_attempt=args[0];row.attempts++;}else changes=0;}
@@ -183,7 +183,7 @@ test('complete multi-message confirmation is atomic, deduplicated and device-syn
  assert.equal(db.entries.length,0);const batch=JSON.parse(db.pendingBatches.get(phone).items_json);
  assert.equal(batch.length,4);assert.equal(batch[3].kind,'income');
  const preview=sent.at(-1).text.body;
- assert.match(preview,/Entradas:/);assert.match(preview,/Despesas:/);assert.match(preview,/Internet/);
+ assert.match(preview,/Recebido:/);assert.match(preview,/Pago:/);assert.match(preview,/Internet/);
  await sendWebhook(e,'approve01',phone,'SIM',jobs);
  assert.equal(db.entries.length,4);assert.equal(db.entries.filter(x=>x.kind==='expense').length,3);
  assert.equal(db.entries.filter(x=>x.kind==='income').length,1);
@@ -235,3 +235,29 @@ test('batch cancellation does not write transactions',async()=>{
  assert.equal(db.pendingBatches.size,0);assert.equal(db.entries.length,0);
 });
 after(()=>{globalThis.fetch=realFetch;});
+
+// Distinguishing planned and realized movement is essential for trustworthy budgets.
+test('verb tenses separate paid, payable, received and receivable in one voice note',()=>{
+ const x=interpretFinanceBatch('paguei 100 de água, tenho que pagar 100 de luz, recebi 3900 de salário e vou receber 200 de serviço','2026-10-08');
+ assert.equal(x.error,null);
+ assert.deepEqual(x.items.map(v=>[v.kind,v.status,v.cents,v.title]),[
+  ['expense','settled',10000,'Água'],['expense','pending',10000,'Luz'],['income','settled',390000,'Salário'],['income','pending',20000,'servico']]);
+});
+test('short phrases without payment verbs default to pending',()=>{
+ const x=interpretFinanceBatch('100 de água, 100 de luz e salário 3900','2026-10-08');
+ assert.equal(x.error,null);
+ assert.deepEqual(x.items.map(v=>[v.kind,v.status]),[['expense','pending'],['expense','pending'],['income','pending']]);
+});
+test('WhatsApp confirmation retains individual payment status and sync exposes it',async()=>{
+ const db=new FakeDatabase(),e=env(db),jobs=[];sent=[];
+ await sendWebhook(e,'tense0001',phone,'paguei 100 de agua e tenho que pagar 100 de luz e recebi 3900 de salario',jobs);
+ assert.match(sent.at(-1).text.body,/A pagar/);
+ assert.equal(db.entries.length,0);
+ await sendWebhook(e,'tense0002',phone,'SIM',jobs);
+ assert.deepEqual(db.entries.map(r=>r.status),['settled','pending','settled']);
+ const hash='x'.repeat(43);
+ await handleRequest(new Request('https://bolso.test/v1/device/pair/start',{method:'POST',headers:{Authorization:'Bearer '+hash}}),e);
+ // No linked device can see private transaction statuses.
+ const forbidden=await handleRequest(new Request('https://bolso.test/v1/device/transactions',{headers:{Authorization:'Bearer '+hash}}),e);
+ assert.equal(forbidden.status,403);
+});

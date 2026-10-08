@@ -1,4 +1,4 @@
-# Bolso+ — Finanças em ordem (Android) | v1.1.0
+# Bolso+ — Finanças em ordem (Android) | v1.4.0
 
 Aplicativo Android de orçamento pessoal com interface escura premium, acompanhamento de porcentagens e entrada por texto/voz, sem conta, anúncios, assinatura, servidor próprio nem permissão de Internet.
 
@@ -57,3 +57,14 @@ Nova aba **WhatsApp** no Android com vínculo de código temporário e importaç
 - O microfone do Android também permite revisar, editar, categorizar e salvar múltiplas despesas/entradas de uma única vez, atomicamente.
 - Para ativar no WhatsApp, publique o Worker na sua conta Cloudflare; **o APK sozinho não recebe mensagens da Meta**.
 - Salários enviados como entrada avulsa contam como entrada adicional. Evite contar a mesma renda também na configuração de renda fixa.
+
+
+## Versão 1.4 — pago, a pagar, recebido, a receber
+
+- Extração determinística de até 12 itens em português brasileiro preservando o verbo e o tempo. Exemplos: `paguei 100 de água` → despesa liquidada; `tenho que pagar 100 de luz` → despesa pendente; `recebi 3900 de salário` → entrada recebida; `vou receber 200 de serviço` → entrada a receber.
+- Sem verbo explícito, o aplicativo evita presumir uma transferência financeira. O usuário corrige o estado antes de confirmar.
+- `status` salvo em SQLite Android (migração v3→v4) e D1 Cloudflare (migration 0003). A migração preserva lançamentos antigos, assumindo-os liquidado, como na versão anterior.
+- A aba Histórico permite editar estado ou marcar um pendente como pago/recebido com um toque e confirmação.
+- `A receber` não entra no saldo previsto até que o estado mude. `A pagar` já é compromisso no total do orçamento. O painel distingue os dois.
+- **Limitação:** contas recorrentes planejadas e gastos avulsos são independentes. Se a mesma fatura for cadastrada em ambos, ela poderá ser contada duas vezes. No lançamento, evite duplicatas; reconciliação de faturas recorrentes é etapa futura.
+- WhatsApp Cloud API requer atualizar Worker/D1 e configurar Meta/Groq pelo proprietário. A integração não é ativada só ao instalar o APK.

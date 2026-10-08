@@ -98,14 +98,14 @@ public final class MainActivity extends Activity {
             month = selectedMonth;
             refresh();
         }
-        @JavascriptInterface public void saveEntry(String kind, long cents, String title, String category, String date, String source) {
-            task(() -> database.saveEntry(kind, cents, title, category, date, source), "Lançamento salvo");
+        @JavascriptInterface public void saveEntry(String kind, long cents, String title, String category, String date, String source, String status) {
+            task(() -> database.saveEntry(kind, cents, title, category, date, source, status), "Lançamento salvo");
         }
         @JavascriptInterface public void saveBatch(String itemsJson, String source) {
             task(() -> database.saveBatch(itemsJson, source), "Lançamentos do áudio salvos");
         }
-        @JavascriptInterface public void updateEntry(long id, String kind, long cents, String title, String category, String date) {
-            task(() -> database.updateEntry(id, kind, cents, title, category, date), "Lançamento atualizado");
+        @JavascriptInterface public void updateEntry(long id, String kind, long cents, String title, String category, String date, String status) {
+            task(() -> database.updateEntry(id, kind, cents, title, category, date, status), "Lançamento atualizado");
         }
         @JavascriptInterface public void deleteEntry(long id) { task(() -> database.deleteEntry(id), "Lançamento excluído"); }
         @JavascriptInterface public void saveIncome(long cents) { task(() -> database.saveIncome(cents), "Renda atualizada"); }

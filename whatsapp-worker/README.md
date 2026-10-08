@@ -129,3 +129,7 @@ O servidor transcreve a mensagem (Groq opcional), separa **4 lançamentos** (Ág
 A IA de transcrição pode errar números e nomes; por isso **nenhum item é registrado sem confirmação**. Casos ambíguos (duas contas e só um preço) pedem correção em vez de distribuição automática. O parser é determinístico para reduzir custo e preservar auditabilidade; ele não promete entender toda formulação natural.
 
 **Atualização do servidor já publicado:** execute `npx wrangler d1 migrations apply bolsoplus_whatsapp --remote` para aplicar `0002_multi_entry_audio.sql`, depois `npx wrangler deploy`. Não substitua nem apague a base D1 existente.
+
+## v1.4: situações de pagamento
+
+Execute `npx wrangler d1 migrations apply bolsoplus_whatsapp --remote` **antes de publicar o Worker v1.4**. A migration `0003_settlement_status.sql` conserva as transações anteriores com status `settled`. Mensagens com verbos claros produzem estado distinto `settled`/`pending`, confirmado no WhatsApp; o Android importa e exibe a situação. `A receber` é previsão, não entrada efetivada. Edite ou marque pago/recebido no aplicativo Android. A sincronização segue unidirecional, sem propagar alterações locais ao WhatsApp.

@@ -39,6 +39,6 @@ jobs:
       - name: Salvar APK
         uses: actions/upload-artifact@v4
         with:
-          name: BolsoPlus-v1.3-multi-audio-apk
+          name: BolsoPlus-v1.4-financial-status-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
